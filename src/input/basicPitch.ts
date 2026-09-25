@@ -47,14 +47,13 @@ export interface Transcriber {
 
 /**
  * Spotify 공식 basic-pitch-ts(@spotify/basic-pitch)로 음 인식기를 만든다.
- * TensorFlow.js는 크기가 커서 마이크를 켤 때만 동적으로 불러온다.
+ * TensorFlow.js는 크기가 커서 동적으로 불러온다. 앱에서는 Web Worker 안에서 돌린다 (aiWorker.ts).
  *
- * 공식 코드는 TensorFlow.js의 기본 계산 방식(WebGL)을 쓰는데, GPU가 약하거나 없는 기기에서는
- * WebAssembly가 10배 이상 빠르다. 그래서 둘 다 돌려 보고 빠른 쪽을 고른다.
+ * 계산 방식은 WebAssembly를 먼저 쓴다. iPad/iPhone의 WebGL은 16비트 부동소수로 계산해
+ * 모델 결과가 틀어질 수 있고, 셰이더 준비에도 몇 초가 걸린다. WebAssembly를 못 쓸 때만 WebGL, CPU 순으로 쓴다.
  */
-export async function loadBasicPitch(modelUrl: string): Promise<Transcriber> {
+export async function createTranscriber(modelUrl: string): Promise<Transcriber> {
   const tf = await import('@tensorflow/tfjs');
-  const candidates: string[] = [];
   try {
     const wasm = await import('@tensorflow/tfjs-backend-wasm');
     wasm.setWasmPaths({
@@ -62,46 +61,29 @@ export async function loadBasicPitch(modelUrl: string): Promise<Transcriber> {
       'tfjs-backend-wasm-simd.wasm': wasmSimdUrl,
       'tfjs-backend-wasm-threaded-simd.wasm': wasmThreadedUrl,
     });
-    candidates.push('wasm');
   } catch {
-    // WebAssembly를 못 쓰는 환경
+    // WebAssembly 백엔드를 못 불러옴
   }
-  candidates.push('webgl');
 
-  // 모델 가중치는 지금 켜진 계산 방식에 올라가므로, 불러오기 전에 하나를 초기화해 둔다
-  for (const backend of [...candidates, 'cpu']) {
+  let backend = '';
+  for (const candidate of ['wasm', 'webgl', 'cpu']) {
     try {
-      if (await tf.setBackend(backend)) break;
+      if (await tf.setBackend(candidate)) {
+        await tf.ready();
+        backend = candidate;
+        break;
+      }
     } catch {
       // 다음 후보
     }
   }
-  await tf.ready();
+  if (!backend) throw new Error('TensorFlow.js 계산 방식을 하나도 쓸 수 없습니다');
 
   const { BasicPitch } = await import('@spotify/basic-pitch');
   const basicPitch = new BasicPitch(tf.loadGraphModel(modelUrl));
   const transcribe = (audio22k: Float32Array, onsetThreshold: number) =>
     transcribeWith(basicPitch, audio22k, onsetThreshold);
-
-  // 후보마다 두 번 돌려서(첫 번째는 준비 시간이 섞이므로 버림) 두 번째 시간을 잰다
-  const silence = new Float32Array(BASIC_PITCH_INPUT_SAMPLES);
-  let best = { backend: 'cpu', ms: Infinity };
-  for (const backend of candidates) {
-    try {
-      if (!(await tf.setBackend(backend))) continue;
-      await tf.ready();
-      await transcribe(silence, 0.5);
-      const t0 = performance.now();
-      await transcribe(silence, 0.5);
-      const ms = performance.now() - t0;
-      if (ms < best.ms) best = { backend, ms };
-    } catch (e) {
-      console.warn(`${backend} 계산 방식을 쓸 수 없습니다`, e);
-    }
-  }
-  await tf.setBackend(best.backend);
-  await tf.ready();
-  if (best.ms === Infinity) await transcribe(silence, 0.5);
-
-  return { transcribe, backend: best.backend };
+  // 첫 실행은 준비 시간이 들어가므로 미리 한 번 돌려 둔다
+  await transcribe(new Float32Array(BASIC_PITCH_INPUT_SAMPLES), 0.5);
+  return { transcribe, backend };
 }

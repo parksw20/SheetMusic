@@ -1,5 +1,6 @@
 import { preferPlayAndRecord, preferPlayback } from '../audio/session';
-import { BASIC_PITCH_INPUT_SAMPLES, BASIC_PITCH_SAMPLE_RATE, loadBasicPitch, type Transcriber } from './basicPitch';
+import { preloadAi, type AiTranscriber } from './aiClient';
+import { BASIC_PITCH_INPUT_SAMPLES, BASIC_PITCH_SAMPLE_RATE } from './basicPitch';
 import { NoteTracker, OnsetJudge } from './onsets';
 import { NoteVerifier, type Sensitivity } from './pitch';
 import { resampleTail } from './resample';
@@ -24,7 +25,23 @@ export interface MicOptions {
   onHeard: (midi: number) => void;
   /** AI 추론 한 번에 걸린 시간 (ms, 이동 평균). 기기 성능 확인용 */
   onInferenceMs?: (ms: number, backend: string) => void;
+  /** 0.5초마다 진단 정보 */
+  onDiagnostics?: (d: MicDiagnostics) => void;
   sensitivity: Sensitivity;
+}
+
+/** 어디서 막히는지 화면에 보여 주기 위한 상태 */
+export interface MicDiagnostics {
+  /** 오디오 컨텍스트 상태 (running이 아니면 소리가 안 들어온다) */
+  audio: string;
+  sampleRate: number;
+  /** 소리 수집 방식과 초당 들어온 샘플 수 */
+  capture: 'worklet' | 'script' | 'none';
+  samplesPerSec: number;
+  /** 입력 크기 (dBFS) */
+  levelDb: number;
+  /** 최근 AI 결과: 찾은 음 수 */
+  lastNotes: number;
 }
 
 export interface MicSession {
@@ -34,6 +51,11 @@ export interface MicSession {
 
 const FFT_SIZE = 8192; // 기본 방식: 48kHz에서 약 170ms 창
 const BASIC_INTERVAL_MS = 20;
+export const MODEL_URL = `${import.meta.env.BASE_URL}models/basic-pitch/model.json`;
+/** 마이크를 켠 직후 이 시간 안의 소리는 판정하지 않는다 (켜는 순간의 잡음) */
+const START_IGNORE_MS = 300;
+/** 이 시간 동안 AudioWorklet으로 소리가 하나도 안 들어오면 ScriptProcessor로 바꾼다 */
+const CAPTURE_WATCHDOG_MS = 1000;
 /** AI 판정 주기. 추론이 이보다 오래 걸리면 자연히 건너뛴다 */
 const AI_INTERVAL_MS = 150;
 
@@ -81,7 +103,7 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   const ctx = new AudioContext();
   const resumed = ctx.resume().catch(() => undefined);
   opts.onStatus('loading');
-  const modelPromise = loadBasicPitch(`${import.meta.env.BASE_URL}models/basic-pitch/model.json`).catch((e) => {
+  const modelPromise = preloadAi(MODEL_URL).catch((e: unknown) => {
     console.warn('Basic Pitch 모델을 불러오지 못했습니다', e);
     return null;
   });
@@ -98,6 +120,11 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
     throw e;
   }
   await resumed;
+  // iOS는 마이크 권한 창이나 전화 등으로 오디오를 멈추기도 한다. 멈추면 다시 켠다
+  if (ctx.state !== 'running') await ctx.resume().catch(() => undefined);
+  ctx.onstatechange = () => {
+    if (ctx.state !== 'running' && ctx.state !== 'closed') void ctx.resume().catch(() => undefined);
+  };
 
   const sr = ctx.sampleRate;
   const source = ctx.createMediaStreamSource(stream);
@@ -129,34 +156,48 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
     return out;
   };
 
-  let tapNode: AudioNode;
+  // 소리 수집: AudioWorklet을 쓰고, 1초 안에 소리가 안 들어오면(Safari에서 조용히 실패하는 경우) ScriptProcessor로 바꾼다
+  let capture: MicDiagnostics['capture'] = 'none';
+  let tapNode: AudioNode | null = null;
+  const useScriptProcessor = () => {
+    tapNode?.disconnect();
+    const node = ctx.createScriptProcessor(4096, 1, 1);
+    node.onaudioprocess = (e) => push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    source.connect(node);
+    node.connect(sink);
+    tapNode = node;
+    capture = 'script';
+  };
   try {
     const url = URL.createObjectURL(new Blob([TAP_WORKLET], { type: 'application/javascript' }));
     await ctx.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
     const node = new AudioWorkletNode(ctx, 'sheetmusic-tap', { numberOfInputs: 1, numberOfOutputs: 1 });
     node.port.onmessage = (e: MessageEvent<Float32Array>) => push(e.data);
+    source.connect(node);
+    node.connect(sink);
     tapNode = node;
+    capture = 'worklet';
   } catch {
-    // AudioWorklet이 없는 이전 브라우저
-    const node = ctx.createScriptProcessor(4096, 1, 1);
-    node.onaudioprocess = (e) => push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    tapNode = node;
+    useScriptProcessor();
   }
-  source.connect(tapNode);
-  tapNode.connect(sink);
+  const watchdog = window.setTimeout(() => {
+    if (written === 0 && capture === 'worklet') useScriptProcessor();
+  }, CAPTURE_WATCHDOG_MS);
 
   // ── 기본 방식 (스펙트럼): AI를 쓸 수 없을 때만 판정한다 ──
   // (실제 피아노 소리에서는 AI보다 오판정이 많아서, AI를 불러오는 몇 초 동안에는 판정하지 않는다)
   const basic = new NoteVerifier(sr, FFT_SIZE, opts.sensitivity);
   const timeData = new Float32Array(analyser.fftSize);
   let useBasic = false;
+  let levelDb = -100;
   const basicTimer = window.setInterval(() => {
     analyser.getFloatTimeDomainData(timeData);
     let sum = 0;
     for (let i = timeData.length - 2048; i < timeData.length; i++) sum += timeData[i] * timeData[i];
     const rms = Math.sqrt(sum / 2048);
-    opts.onLevel(Math.min(1, Math.max(0, (20 * Math.log10(rms + 1e-9) + 60) / 50))); // -60dB~-10dB → 0~1
+    levelDb = 20 * Math.log10(rms + 1e-9);
+    opts.onLevel(Math.min(1, Math.max(0, (levelDb + 60) / 50))); // -60dB~-10dB → 0~1
     if (!useBasic) return;
 
     const expected = opts.getExpected();
@@ -172,14 +213,28 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   let thresholds = AI_THRESHOLDS[opts.sensitivity];
   const judge = new OnsetJudge(thresholds.wrong);
   let tracker: NoteTracker | null = null;
-  let transcriber: Transcriber | null = null;
+  let transcriber: AiTranscriber | null = null;
   let busy = false;
   let stopped = false;
   let avgMs = 0;
   const need = Math.ceil((BASIC_PITCH_INPUT_SAMPLES / BASIC_PITCH_SAMPLE_RATE) * sr) + 2;
   const windowMs = (BASIC_PITCH_INPUT_SAMPLES / BASIC_PITCH_SAMPLE_RATE) * 1000;
 
-  void modelPromise.then((t) => {
+  let lastNotes = 0;
+  let lastWritten = 0;
+  const diagTimer = window.setInterval(() => {
+    opts.onDiagnostics?.({
+      audio: ctx.state,
+      sampleRate: sr,
+      capture,
+      samplesPerSec: (written - lastWritten) * 2,
+      levelDb,
+      lastNotes,
+    });
+    lastWritten = written;
+  }, 500);
+
+  void modelPromise.then((t: AiTranscriber | null) => {
     if (stopped) return;
     transcriber = t;
     useBasic = !t;
@@ -198,11 +253,12 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
       const ms = performance.now() - t0;
       avgMs = avgMs ? avgMs * 0.8 + ms * 0.2 : ms;
       opts.onInferenceMs?.(avgMs, transcriber.backend);
+      lastNotes = notes.length;
       if (!tracker) {
-        // 첫 창은 통째로 버린다 (마이크를 켜기 전의 0 구간, 켜는 순간의 잡음). 이후 새로 들어온 소리부터 판정한다
-        tracker = new NoteTracker(endMs);
+        // 창이 처음 찬 시점: 마이크를 켠 순간의 잡음만 빼고 바로 판정을 시작한다
+        // (오디오 시간은 수집한 샘플 수로 센다. 0 = 마이크를 켠 순간)
+        tracker = new NoteTracker(START_IGNORE_MS);
         opts.onStatus('ai');
-        return;
       }
       const found = tracker.update(notes, endMs - windowMs);
       for (const o of found) opts.onHeard(o.midi);
@@ -230,6 +286,9 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
       preferPlayback();
       window.clearInterval(basicTimer);
       window.clearInterval(aiTimer);
+      window.clearInterval(diagTimer);
+      window.clearTimeout(watchdog);
+      ctx.onstatechange = null;
       stream.getTracks().forEach((t) => t.stop());
       void ctx.close();
       opts.onLevel(0);

@@ -11,7 +11,7 @@ import {
   type PracticeState,
 } from './engine/practice';
 import { listenComputerKeyboard } from './input/computerKeyboard';
-import { isMicSupported, startMic, type MicSession, type MicStatus } from './input/mic';
+import { isMicSupported, MODEL_URL, startMic, type MicDiagnostics, type MicSession, type MicStatus } from './input/mic';
 import { connectMidi, isMidiSupported, type MidiConnection } from './input/midi';
 import type { Sensitivity } from './input/pitch';
 import type { NoteInput } from './input/types';
@@ -83,6 +83,8 @@ export default function App() {
   const [micStatus, setMicStatus] = useState<MicStatus>('loading');
   const [heard, setHeard] = useState<number | null>(null);
   const [inference, setInference] = useState<{ ms: number; backend: string } | null>(null);
+  const [diag, setDiag] = useState<MicDiagnostics | null>(null);
+  const [aiPreload, setAiPreload] = useState<'loading' | 'ready' | 'failed'>('loading');
   const heardTimer = useRef<number | undefined>(undefined);
   const [micError, setMicError] = useState<string | null>(null);
   const [sensitivity, setSensitivity] = useState<Sensitivity>(loadSensitivity);
@@ -95,6 +97,17 @@ export default function App() {
   const keyboardBase = useRef(60);
   const micRef = useRef<MicSession | null>(null);
   const micLevelRef = useRef<HTMLDivElement>(null);
+
+  // AI 인식기를 앱을 열 때 미리 불러 둔다 (마이크를 켤 때 기다리지 않게)
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      import('./input/aiClient')
+        .then((m) => m.preloadAi(MODEL_URL))
+        .then(() => setAiPreload('ready'))
+        .catch(() => setAiPreload('failed'));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // 곡 목록
   useEffect(() => {
@@ -263,6 +276,7 @@ export default function App() {
         },
         onStatus: setMicStatus,
         onInferenceMs: (ms, backend) => setInference({ ms, backend }),
+        onDiagnostics: setDiag,
         onHeard: (midi) => {
           setHeard(midi);
           window.clearTimeout(heardTimer.current);
@@ -464,6 +478,14 @@ export default function App() {
         )}
       </section>
 
+      {micOn && diag && (
+        <p className="diag" aria-label="마이크 진단">
+          오디오 {diag.audio === 'running' ? '정상' : diag.audio} · {Math.round(diag.sampleRate / 1000)}kHz · 수집{' '}
+          {diag.capture} {Math.round(diag.samplesPerSec / 1000)}k/초 · 입력 {Math.round(diag.levelDb)}dB · AI{' '}
+          {aiPreload === 'failed' ? '불러오기 실패' : inference ? `${inference.backend} ${Math.round(inference.ms)}ms` : '준비 중'}{' '}
+          · 최근 인식 {diag.lastNotes}음
+        </p>
+      )}
       {loadError && <p className="error">{loadError}</p>}
       {micError && <p className="error">{micError}</p>}
       {xml && (
