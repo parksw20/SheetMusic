@@ -24,7 +24,7 @@ import {
   type Score,
 } from './score/model';
 import { parseMusicXml } from './score/parseMusicXml';
-import { loadBestStars, loadSensitivity, loadZoom, saveBestStars, saveSensitivity, saveZoom } from './storage';
+import { loadBestStars, loadSensitivity, saveBestStars, saveSensitivity } from './storage';
 
 interface SongInfo {
   file: string;
@@ -46,8 +46,6 @@ const SENSITIVITIES: { value: Sensitivity; label: string }[] = [
   { value: 'high', label: '높음' },
 ];
 
-const ZOOM_MIN = 0.8;
-const ZOOM_MAX = 2.4;
 
 export default function App() {
   const [songs, setSongs] = useState<SongInfo[]>([]);
@@ -58,9 +56,6 @@ export default function App() {
 
   const [hand, setHand] = useState<HandFilter>('both');
   const [tempo, setTempo] = useState(100); // %
-  const [zoom, setZoom] = useState(loadZoom);
-  /** 한 줄 4마디가 들어가도록 실제로 적용된 배율 (zoom 이하) */
-  const [fitZoom, setFitZoom] = useState(zoom);
   const [mode, setMode] = useState<Mode>('idle');
   const [practice, setPractice] = useState<PracticeState | null>(null);
   const [resetKey, setResetKey] = useState(0);
@@ -151,13 +146,6 @@ export default function App() {
       setMode('idle');
       setDemoBeat(0);
     });
-  };
-
-  const changeZoom = (delta: number) => {
-    // 화면에 보이는 배율에서 움직인다 (4마디를 맞추느라 줄어든 경우 포함)
-    const next = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, fitZoom + delta)) * 10) / 10;
-    setZoom(next);
-    saveZoom(next);
   };
 
   const handleNote = useCallback(
@@ -412,20 +400,6 @@ export default function App() {
           </span>
         )}
 
-        <span className="zoom" role="group" aria-label="악보 크기">
-          <button onClick={() => changeZoom(-0.1)} disabled={fitZoom <= ZOOM_MIN} aria-label="작게">
-            −
-          </button>
-          <span>{Math.round(fitZoom * 100)}%</span>
-          {/* 한 줄 4마디가 들어가는 최대 배율이면 더 키울 수 없다 */}
-          <button
-            onClick={() => changeZoom(0.1)}
-            disabled={fitZoom >= ZOOM_MAX || fitZoom < zoom}
-            aria-label="크게"
-          >
-            +
-          </button>
-        </span>
       </section>
 
       {loadError && <p className="error">{loadError}</p>}
@@ -434,8 +408,6 @@ export default function App() {
         <ScoreView
           xml={xml}
           cursorBeat={cursorBeat}
-          zoom={zoom}
-          onFitZoom={setFitZoom}
           markPassed={practicing}
           hand={hand}
           resetKey={resetKey}
