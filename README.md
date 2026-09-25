@@ -4,6 +4,7 @@
 
 ## 기능 (1단계 MVP)
 
+- **난이도 선택**: 좌상단에서 입문/초급/중급을 고르면 그 난이도의 곡만 보입니다 (7곡)
 - **악보 표시**: MusicXML 악보를 [OpenSheetMusicDisplay](https://opensheetmusicdisplay.org/)로 그리고, 지금 칠 위치를 커서로 표시
   - 한 줄 4마디, 곡 전체에서 모든 칸이 같은 너비 (줄 첫 칸의 음자리표 포함, `src/score/grid.ts`)
   - 배율은 iPad 세로 화면 폭에 4칸이 꽉 차는 값으로 자동 결정. 가로 화면에서는 같은 배율로 4칸이 화면 폭을 가득 채움
@@ -48,18 +49,51 @@ iPad Safari에서 이 주소를 열고 공유 버튼 → **홈 화면에 추가*
 
 잘 안 잡히면 감도를 `높음`으로, 틀린 음이 너무 자주 나오면 `낮음`으로 바꿉니다.
 
-### 마이크 인식 방식과 한계
+### 마이크 인식 방식 (AI: Spotify 공식 basic-pitch-ts)
 
-악보를 받아 적는 대신, **지금 쳐야 할 음이 새로 울렸는지만 확인**합니다 (`src/input/pitch.ts`).
+Spotify가 공개한 [basic-pitch-ts](https://github.com/spotify/basic-pitch-ts)(npm `@spotify/basic-pitch`, Apache 2.0)를 그대로 씁니다. 여러 음이 동시에 울리는 화음도 건반별로 구분합니다.
 
-1. 스펙트럼 변화량으로 새 타건을 찾습니다.
-2. 타건 직후 기대 음의 주파수 에너지가 타건 전보다 커졌고, 옆 반음보다 큰 봉우리이면 맞음으로 봅니다.
-3. 기대 음이 안 들리고 다른 음이 뚜렷하면 그 음을 틀린 음으로 보고합니다.
+| 단계 | 사용하는 코드 |
+|---|---|
+| 모델 실행 | 공식 `BasicPitch.evaluateModel` (TensorFlow.js) |
+| 음 추출 (시작 시간, 길이, 세기) | 공식 `outputToNotesPoly` → `noteFramesToTime` |
+| 모델 파일 | 공식 패키지의 `model/` (빌드할 때 `scripts/copy-model.mjs`가 `public/models/`로 복사) |
+| 마이크 수집, 22,050Hz 변환 | `src/input/mic.ts`, `src/input/resample.ts` |
+| 악보와 비교해 맞음/틀림 판정 | `src/input/onsets.ts` (앱 고유 로직, 단위 테스트 있음) |
+
+1. 마이크 소리를 끊김 없이 모읍니다 (AudioWorklet).
+2. 0.15초마다 최근 1.8초를 공식 `evaluateModel` → `outputToNotesPoly`에 넣어 음 목록을 받습니다 (타건 확률 기준 0.7).
+3. 창이 겹쳐 여러 번 나오는 같은 음은 한 번만 쓰고, 창 시작에 걸친 음(앞에서부터 울리던 음)은 버립니다.
+4. 지금 쳐야 할 음이면 맞음, 아니면 세기 0.5 이상일 때만 틀림으로 봅니다. 화음이나 배음이 몇 ms 차이로 잡혀도 틀림으로 세지 않고, 앞 단계를 끝낸 타건으로 다음 단계를 미리 맞히지 않습니다.
+
+계산은 GPU(WebGL)와 WebAssembly 중 그 기기에서 더 빠른 쪽을 자동으로 고릅니다. 마이크 옆에 `AI 380ms · wasm`처럼 한 번 분석하는 데 걸리는 시간이 표시됩니다.
+
+사용 순서: `🎤 마이크 켜기` → 버튼이 `🎤 AI 인식 중`으로 바뀌면(모델 준비와 소리 수집, 몇 초 걸림) 연주를 시작합니다. 마이크 옆에는 들린 음이 표시되어 인식이 되는지 바로 볼 수 있습니다.
+
+AI 모델을 불러오지 못하면 예전의 스펙트럼 방식(`src/input/pitch.ts`)으로 판정하고 버튼에 `(기본)`이 붙습니다.
+
+실제 그랜드 피아노 녹음(Salamander Grand Piano)에 방 울림, 마이크 대역, 잡음을 섞어 브라우저에서 앱 전체를 실행한 결과:
+
+| 녹음 | 맞음 | 틀림 |
+|---|---|---|
+| 작은 별 전곡 (양손 화음) | 65/65 | 0 |
+| 징글벨 전곡 | 68/68 | 0 |
+| 미뉴에트 G장조 전곡 (8분음표 0.35초 간격) | 83/83 | 0 |
+| 도레미 (보통 / 작게 / 시끄러운 방) | 13/13 | 0 |
+| 도레미 중간에 틀린 음 2번 | 13/13 | 2 (정확히 잡음) |
+
+지연(건반을 누른 뒤 판정까지)은 약 0.5초입니다. 대기 모드에는 충분하지만, 템포에 맞춰 흘러가는 박자 모드를 만들면 이만큼 보정이 필요합니다.
 
 알려진 한계:
-- **옥타브 혼동**: 낮은 음의 2배음이 한 옥타브 위 음과 같은 주파수라서, 화음에 옥타브 관계의 두 음(예: C3+C4)이 있으면 아래 음만 쳐도 위 음이 맞은 것으로 잡힐 수 있습니다.
-- **빠른 연타**: 타건 사이 최소 간격이 약 0.17초라서 아주 빠른 연타는 놓칠 수 있습니다. 대기 모드에서는 문제가 되지 않습니다.
 - **스피커 소리**: 마이크를 켠 상태에서 `들어보기`를 하면 재생음이 마이크로 들어갑니다. 연습 중일 때만 판정하므로 채점에는 영향이 없습니다.
+- **준비 시간**: 마이크를 켜고 몇 초 뒤부터 판정합니다. 그 전에 친 음은 세지 않습니다.
+
+개발용 재생 테스트(평소에는 건너뜀):
+
+```bash
+# 실제 녹음 WAV를 AI 판정으로 재생 (단계는 MIDI 번호 배열)
+AI_REPLAY_WAV=연주.wav AI_REPLAY_STEPS='[[60],[62],[64]]' npx vitest run src/input/aiReplay.test.ts
+```
 
 ## 곡 추가하기
 
@@ -79,8 +113,11 @@ src/
   score/model.ts          내부 음표 모델 (NoteEvent, Step), 손 필터, 음 이름
   score/parseMusicXml.ts  MusicXML → NoteEvent[] (backup/forward, 화음, 붙임줄, 임시표)
   engine/practice.ts      대기 모드 상태 머신과 채점 (순수 함수, 테스트 있음)
-  input/pitch.ts          마이크 스펙트럼에서 기대 음 검증 (순수 로직, 합성음 테스트 있음)
-  input/mic.ts            마이크 → AnalyserNode → pitch.ts 연결
+  input/mic.ts            마이크 수집(AudioWorklet), AI/기본 방식 판정 연결
+  input/basicPitch.ts     공식 basic-pitch-ts로 인식기 만들기 (계산 방식 자동 선택)
+  input/onsets.ts         인식된 음 중복 제거, 맞음/틀림 판정 (순수 로직, 테스트 있음)
+  input/resample.ts       마이크 샘플레이트 → 22,050Hz
+  input/pitch.ts          기본 방식: 스펙트럼으로 기대 음 검증 (AI를 못 쓸 때)
   input/                  MIDI, 외장 키보드 입력 → 공통 NoteInput 이벤트
   audio/synth.ts          Tone.js 신스, 악보 재생
   components/             ScoreView(OSMD, 커서와 맞은 음 색칠), ResultPanel

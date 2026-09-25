@@ -67,11 +67,16 @@ export class NoteVerifier {
   private readonly hi: number;
   private tuning: Tuning;
   private prev: Float32Array | null = null;
+  private prevEnergy = 0;
+  /** 직전 호출의 기대 음. 새 단계로 넘어갔는지 알아내는 데 쓴다 */
+  private prevExpected = new Set<number>();
   private history: { t: number; db: Float32Array }[] = [];
   private fluxHistory: number[] = [];
   private lastOnset = -Infinity;
   private onset: Onset | null = null;
   private recentHits = new Map<number, number>();
+  /** 개발용: 판정 과정을 문자열로 받아 본다 */
+  debug?: (message: string) => void;
   /**
    * 연속 타건 사이 최소 간격 = 분석 창 길이.
    * 새 음이 창을 채우는 동안(약 170ms)은 flux가 계속 높아서 타건이 여러 번 잡히기 때문이다.
@@ -124,10 +129,20 @@ export class NoteVerifier {
     const { frameMax, floor } = this.stats(db);
     const flux = this.prev ? this.flux(db, this.prev, floor) : 0;
     this.prev = db;
+    const energy = this.energy(db);
+    // 건반을 뗄 때(소리가 줄어듦)도 스펙트럼이 흔들려 flux가 생긴다. 전체 에너지가 커질 때만 타건으로 본다
+    const rising = energy > this.prevEnergy;
+    this.prevEnergy = energy;
+
+    // 새 단계로 넘어가면(처음 보는 기대 음이 생기면) 이전 타건의 판정 창을 닫는다.
+    // 안 그러면 방금 친 음의 배음(예: 도3의 3배음 = 솔4)으로 다음 단계를 미리 맞혀 버린다.
+    if (expected.some((m) => !this.prevExpected.has(m))) this.onset = null;
+    this.prevExpected = new Set(expected);
 
     const recent = this.fluxHistory.slice(-30).sort((a, b) => a - b);
     const median = recent.length ? recent[Math.floor(recent.length / 2)] : 0;
-    const isOnset = flux > Math.max(this.tuning.minFlux, median * 3) && t - this.lastOnset > this.refractoryMs;
+    const isOnset =
+      rising && flux > Math.max(this.tuning.minFlux, median * 3) && t - this.lastOnset > this.refractoryMs;
     this.fluxHistory.push(flux);
     if (this.fluxHistory.length > 60) this.fluxHistory.shift();
 
@@ -161,6 +176,10 @@ export class NoteVerifier {
       const base = baseline(midi);
       // 이미 울리던 음을 다시 친 경우(연타)는 증가 폭이 작으므로 기준을 낮춘다
       const needRise = base >= floor + 20 ? REPEAT_RISE_DB : this.tuning.riseDb;
+      this.debug?.(
+        `t=${Math.round(t - on.t)} m=${midi} lv=${lv.toFixed(1)} base=${base.toFixed(1)} need=${needRise} ` +
+          `max=${frameMax.toFixed(1)} floor=${floor.toFixed(1)} peak=${this.isPeak(db, midi, expected)}`,
+      );
       if (
         lv - base >= needRise &&
         lv >= frameMax - 30 &&
@@ -224,6 +243,13 @@ export class NoteVerifier {
       const d = Math.max(db[i], gate) - Math.max(prev[i], gate);
       if (d > 0 && Number.isFinite(d)) sum += d;
     }
+    return sum;
+  }
+
+  /** 분석 대역의 전체 에너지 (선형) */
+  private energy(db: Float32Array): number {
+    let sum = 0;
+    for (let i = this.lo; i <= this.hi; i++) if (Number.isFinite(db[i])) sum += 10 ** (db[i] / 10);
     return sum;
   }
 
