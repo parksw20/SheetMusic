@@ -53,6 +53,7 @@ button, select, .button {
 button:disabled { opacity: 0.4; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 8px 24px; }
 .button input { display: none; }
+select.level { font-weight: 600; }
 select.song { flex: 0 1 360px; min-width: 160px; }
 /* iPad 가로 화면에서는 윗줄을 한 줄로 유지 */
 @media (min-width: 1100px) {

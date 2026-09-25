@@ -1,17 +1,51 @@
 [
   {
     "file": "c-position.musicxml",
-    "title": "도레미 연습 (오른손)",
-    "composer": "연습곡"
+    "title": "도레미 연습",
+    "composer": "연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "mary.musicxml",
+    "title": "떴다 떴다 비행기 (Mary Had a Little Lamb)",
+    "composer": "미국 동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "lightly-row.musicxml",
+    "title": "나비야 (Lightly Row)",
+    "composer": "독일 민요",
+    "level": 1,
+    "levelName": "입문"
   },
   {
     "file": "twinkle.musicxml",
     "title": "작은 별 (Twinkle Twinkle Little Star)",
-    "composer": "프랑스 민요"
+    "composer": "프랑스 민요",
+    "level": 2,
+    "levelName": "초급"
   },
   {
     "file": "ode-to-joy.musicxml",
     "title": "환희의 송가 (Ode to Joy)",
-    "composer": "L. v. Beethoven"
+    "composer": "L. v. Beethoven",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "jingle-bells.musicxml",
+    "title": "징글벨 (Jingle Bells, 후렴)",
+    "composer": "J. Pierpont",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "minuet-in-g.musicxml",
+    "title": "미뉴에트 G장조 (Minuet in G, 쉬운 편곡)",
+    "composer": "C. Petzold",
+    "level": 3,
+    "levelName": "중급"
   }
 ]
