@@ -4,7 +4,10 @@
 
 ## 기능 (1단계 MVP)
 
-- **악보 표시**: MusicXML 악보를 [OpenSheetMusicDisplay](https://opensheetmusicdisplay.org/)로 화면 가득 그리고, 지금 칠 위치를 커서로 표시. `−`/`+`로 악보 크기 조절(기본 140%, 저장됨)
+- **악보 표시**: MusicXML 악보를 [OpenSheetMusicDisplay](https://opensheetmusicdisplay.org/)로 그리고, 지금 칠 위치를 커서로 표시
+  - 한 줄 4마디, 곡 전체에서 모든 칸이 같은 너비 (줄 첫 칸의 음자리표 포함, `src/score/grid.ts`)
+  - 배율은 iPad 세로 화면 폭에 4칸이 꽉 차는 값으로 자동 결정. 가로 화면에서는 같은 배율로 4칸이 화면 폭을 가득 채움
+  - 박자표는 줄마다 칸 위치를 맞추려고 악보에서 빼고 상단 제목 옆에 표시
 - **대기 모드 연습**: 맞는 음(화음은 모든 음)을 칠 때까지 기다렸다가 다음으로 이동. 연습 중에는 설정 줄을 숨겨 악보 영역을 넓힘
 - **피드백**: 맞게 친 음은 악보에서 초록색으로 바뀌고, 틀리면 악보 테두리가 빨갛게 깜빡임. 상단에 다음에 칠 음(계이름, 음이름) 표시
 - **채점**: 맞은 음, 틀린 음, 정확도, 한 번에 통과한 비율, 별점(0~3), 곡별 최고 별점 저장
@@ -72,6 +75,7 @@ MuseScore 같은 악보 프로그램에서 MusicXML로 내보낸 파일을 `publ
 
 ```
 src/
+  score/grid.ts           한 줄 4칸, 같은 칸 너비를 위한 배율/마디 너비 계산 (테스트 있음)
   score/model.ts          내부 음표 모델 (NoteEvent, Step), 손 필터, 음 이름
   score/parseMusicXml.ts  MusicXML → NoteEvent[] (backup/forward, 화음, 붙임줄, 임시표)
   engine/practice.ts      대기 모드 상태 머신과 채점 (순수 함수, 테스트 있음)

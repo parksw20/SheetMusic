@@ -101,10 +101,6 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 .mic button.active { background: #dcfce7; border-color: var(--hit); color: #166534; font-weight: 600; }
 .meter { width: 80px; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: var(--hit); transition: width 0.05s linear; }
-.mic + .zoom { margin-left: 0; }
-.zoom { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-.zoom button { width: 44px; padding: 0; font-size: 22px; }
-.zoom span { min-width: 52px; text-align: center; color: var(--muted); font-size: 15px; }
 
 .error { color: var(--wrong); padding: 0 20px; }
 

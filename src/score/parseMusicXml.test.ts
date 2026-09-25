@@ -13,6 +13,7 @@ describe('parseMusicXml', () => {
     const score = parseMusicXml(song('twinkle.musicxml'));
     expect(score.title).toContain('작은 별');
     expect(score.bpm).toBe(90);
+    expect(score.timeSignature).toBe('4/4');
     expect(score.totalBeats).toBe(48);
     const rh = filterByHand(score.notes, 'right').slice(0, 4).map((n) => midiToName(n.midi));
     expect(rh).toEqual(['C4', 'C4', 'G4', 'G4']);

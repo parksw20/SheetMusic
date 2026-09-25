@@ -24,7 +24,7 @@ import {
   type Score,
 } from './score/model';
 import { parseMusicXml } from './score/parseMusicXml';
-import { loadBestStars, loadSensitivity, loadZoom, saveBestStars, saveSensitivity, saveZoom } from './storage';
+import { loadBestStars, loadSensitivity, saveBestStars, saveSensitivity } from './storage';
 
 interface SongInfo {
   file: string;
@@ -46,8 +46,6 @@ const SENSITIVITIES: { value: Sensitivity; label: string }[] = [
   { value: 'high', label: '높음' },
 ];
 
-const ZOOM_MIN = 0.8;
-const ZOOM_MAX = 2.4;
 
 export default function App() {
   const [songs, setSongs] = useState<SongInfo[]>([]);
@@ -58,7 +56,6 @@ export default function App() {
 
   const [hand, setHand] = useState<HandFilter>('both');
   const [tempo, setTempo] = useState(100); // %
-  const [zoom, setZoom] = useState(loadZoom);
   const [mode, setMode] = useState<Mode>('idle');
   const [practice, setPractice] = useState<PracticeState | null>(null);
   const [resetKey, setResetKey] = useState(0);
@@ -148,14 +145,6 @@ export default function App() {
       stopDemoRef.current = null;
       setMode('idle');
       setDemoBeat(0);
-    });
-  };
-
-  const changeZoom = (delta: number) => {
-    setZoom((z) => {
-      const next = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta)) * 10) / 10;
-      saveZoom(next);
-      return next;
     });
   };
 
@@ -357,6 +346,7 @@ export default function App() {
             <span className="title">
               {score?.title}
               {score?.composer && <small> · {score.composer}</small>}
+              {score?.timeSignature && <small> · {score.timeSignature}박자</small>}
             </span>
           </>
         )}
@@ -410,15 +400,6 @@ export default function App() {
           </span>
         )}
 
-        <span className="zoom" role="group" aria-label="악보 크기">
-          <button onClick={() => changeZoom(-0.1)} disabled={zoom <= ZOOM_MIN} aria-label="작게">
-            −
-          </button>
-          <span>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => changeZoom(0.1)} disabled={zoom >= ZOOM_MAX} aria-label="크게">
-            +
-          </button>
-        </span>
       </section>
 
       {loadError && <p className="error">{loadError}</p>}
@@ -427,7 +408,6 @@ export default function App() {
         <ScoreView
           xml={xml}
           cursorBeat={cursorBeat}
-          zoom={zoom}
           markPassed={practicing}
           hand={hand}
           resetKey={resetKey}
