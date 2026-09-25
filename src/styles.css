@@ -78,7 +78,7 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 .title { font-weight: 600; flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .title small { color: var(--muted); font-weight: 400; }
 
-.progress { flex: 1; min-width: 120px; max-width: 360px; height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
+.progress { flex: 1; min-width: 60px; max-width: 360px; height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
 .progress div { height: 100%; background: var(--hit); transition: width 0.2s; }
 .stat { font-variant-numeric: tabular-nums; font-weight: 600; }
 .stat .ok { color: var(--hit); }
@@ -100,6 +100,8 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 
 .mic { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
 .mic button.active { background: #dcfce7; border-color: var(--hit); color: #166534; font-weight: 600; }
+.perf { color: var(--muted); font-variant-numeric: tabular-nums; }
+.heard { min-width: 64px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 .meter { width: 80px; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: var(--hit); transition: width 0.05s linear; }
 

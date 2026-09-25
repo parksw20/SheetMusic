@@ -11,7 +11,7 @@ import {
   type PracticeState,
 } from './engine/practice';
 import { listenComputerKeyboard } from './input/computerKeyboard';
-import { isMicSupported, startMic, type MicSession } from './input/mic';
+import { isMicSupported, startMic, type MicSession, type MicStatus } from './input/mic';
 import { connectMidi, isMidiSupported, type MidiConnection } from './input/midi';
 import type { Sensitivity } from './input/pitch';
 import type { NoteInput } from './input/types';
@@ -43,6 +43,13 @@ const HANDS: { value: HandFilter; label: string }[] = [
   { value: 'left', label: '왼손' },
 ];
 
+const MIC_LABELS: Record<MicStatus, string> = {
+  loading: '🎤 AI 준비 중…',
+  warming: '🎤 듣는 중…',
+  ai: '🎤 AI 인식 중',
+  basic: '🎤 듣는 중 (기본)',
+};
+
 const SENSITIVITIES: { value: Sensitivity; label: string }[] = [
   { value: 'low', label: '낮음' },
   { value: 'normal', label: '보통' },
@@ -73,6 +80,10 @@ export default function App() {
   const [midiError, setMidiError] = useState<string | null>(null);
   const [soundForMidi, setSoundForMidi] = useState(false);
   const [micOn, setMicOn] = useState(false);
+  const [micStatus, setMicStatus] = useState<MicStatus>('loading');
+  const [heard, setHeard] = useState<number | null>(null);
+  const [inference, setInference] = useState<{ ms: number; backend: string } | null>(null);
+  const heardTimer = useRef<number | undefined>(undefined);
   const [micError, setMicError] = useState<string | null>(null);
   const [sensitivity, setSensitivity] = useState<Sensitivity>(loadSensitivity);
 
@@ -240,18 +251,25 @@ export default function App() {
       return;
     }
     try {
-      micRef.current = await startMic(
-        (e) => handleNoteRef.current(e),
-        () => {
+      micRef.current = await startMic({
+        listener: (e) => handleNoteRef.current(e),
+        getExpected: () => {
           const p = practiceRef.current;
           const s = p && !isFinished(p) ? currentStep(p) : undefined;
           return s ? s.notes.map((n) => n.midi).filter((m) => !p!.hit.includes(m)) : [];
         },
-        (level) => {
+        onLevel: (level) => {
           if (micLevelRef.current) micLevelRef.current.style.width = `${Math.round(level * 100)}%`;
         },
+        onStatus: setMicStatus,
+        onInferenceMs: (ms, backend) => setInference({ ms, backend }),
+        onHeard: (midi) => {
+          setHeard(midi);
+          window.clearTimeout(heardTimer.current);
+          heardTimer.current = window.setTimeout(() => setHeard(null), 1500);
+        },
         sensitivity,
-      );
+      });
       setMicOn(true);
       setMicError(null);
     } catch {
@@ -412,27 +430,38 @@ export default function App() {
         {isMicSupported() && (
           <span className="mic">
             <button className={micOn ? 'active' : ''} onClick={toggleMic} aria-pressed={micOn}>
-              {micOn ? '🎤 듣는 중' : '🎤 마이크 켜기'}
+              {micOn ? MIC_LABELS[micStatus] : '🎤 마이크 켜기'}
             </button>
             {micOn && (
               <span className="meter" aria-hidden>
                 <span ref={micLevelRef} />
               </span>
             )}
-            <select
-              value={sensitivity}
-              onChange={(e) => changeSensitivity(e.target.value as Sensitivity)}
-              aria-label="마이크 감도"
-            >
-              {SENSITIVITIES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  감도 {s.label}
-                </option>
-              ))}
-            </select>
+            {micOn && (
+              <span className="heard" aria-live="polite" title="마이크에 들린 음">
+                {heard !== null ? `${midiToSolfege(heard)} ${midiToName(heard)}` : '·'}
+              </span>
+            )}
+            {micOn && micStatus === 'ai' && inference && (
+              <small className="perf" title="AI 인식 한 번에 걸리는 시간과 계산 방식">
+                AI {Math.round(inference.ms)}ms · {inference.backend}
+              </small>
+            )}
+            {!practicing && (
+              <select
+                value={sensitivity}
+                onChange={(e) => changeSensitivity(e.target.value as Sensitivity)}
+                aria-label="마이크 감도"
+              >
+                {SENSITIVITIES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    감도 {s.label}
+                  </option>
+                ))}
+              </select>
+            )}
           </span>
         )}
-
       </section>
 
       {loadError && <p className="error">{loadError}</p>}
