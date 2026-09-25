@@ -1,77 +1,53 @@
 /**
- * Basic Pitch 모델 출력에서 타건(건반을 누른 순간)을 뽑고, 쳐야 할 음과 비교해 판정한다.
+ * 공식 basic-pitch-ts가 찾아 준 음들을 연습 흐름에 맞게 다룬다.
+ *  - NoteTracker: 창을 겹쳐 가며 여러 번 나오는 같은 음을 한 번만 내보낸다
+ *  - OnsetJudge: 지금 쳐야 할 음과 비교해 맞음/틀림을 정한다
  * 모델과 브라우저에 의존하지 않는 순수 로직이다.
  */
 
-export const BASIC_PITCH = {
-  sampleRate: 22050,
-  /** 모델 입력 길이 (약 2초) */
-  windowSamples: 43844,
-  /** 출력 한 프레임이 차지하는 샘플 수 (초당 약 86프레임) */
-  hop: 256,
-  keys: 88,
-  /** 0번 건반 = A0 = MIDI 21 */
-  midiOffset: 21,
-};
-
 export interface NoteOnset {
   midi: number;
-  /** 오디오 시간 (ms) */
+  /** 음이 시작된 오디오 시간 (ms) */
   time: number;
-  /** 모델이 준 타건 확률 0~1 */
-  prob: number;
+  /** 음의 세기 0~1 (basic-pitch의 amplitude: 음이 울리는 동안의 평균 활성도) */
+  confidence: number;
 }
 
-/** 같은 건반의 타건을 두 번 세지 않는 최소 간격 */
-const MIN_GAP_MS = 120;
+/** basic-pitch outputToNotesPoly → noteFramesToTime 결과 중 여기서 쓰는 값 */
+export interface TranscribedNote {
+  pitchMidi: number;
+  startTimeSeconds: number;
+  amplitude: number;
+}
 
+/** 같은 건반에서 이 시간 안에 다시 시작된 음은 같은 음으로 본다 (창이 겹쳐 같은 음이 여러 번 나옴) */
+const SAME_NOTE_MS = 150;
 /**
- * 창을 겹쳐 가며 들어오는 모델 출력에서 새 타건만 뽑는다.
- * 창 끝부분 몇 프레임은 뒤쪽 맥락이 없어 부정확하므로 다음 창에서 확정한다.
+ * 창 시작 직후에 시작하는 음은 버린다. 창 앞에서부터 울리던 음을 새 음으로 잡는 경우이고,
+ * 진짜 새 타건은 다음 창들(0.15초마다)에서 더 안쪽 위치로 다시 나온다.
  */
-export class OnsetExtractor {
-  private confirmedUntil: number;
-  private lastEvent = new Map<number, number>();
+const WINDOW_HEAD_SECONDS = 0.25;
+
+export class NoteTracker {
+  private lastStart = new Map<number, number>();
 
   constructor(
-    /** 이 확률보다 낮은 타건은 버린다 */
-    private threshold: number,
-    /** 창 끝에서 확정을 미루는 프레임 수. 모델은 뒤쪽 소리도 보고 판단하므로 끝부분은 확률이 낮게 나온다 */
-    private edgeFrames = 18,
-    /** 이 시간(ms) 이전 타건은 무시한다. 녹음 시작 직후 창 앞쪽이 0으로 채워져 생기는 가짜 타건을 막는다 */
-    ignoreBeforeMs = -Infinity,
-  ) {
-    this.confirmedUntil = ignoreBeforeMs;
-  }
+    /** 이 시간(ms) 이전에 시작된 음은 무시한다 (마이크를 켜기 전·켜는 순간의 소리) */
+    private ignoreBeforeMs = -Infinity,
+  ) {}
 
-  setThreshold(threshold: number) {
-    this.threshold = threshold;
-  }
-
-  /** onsets: [프레임][88건반] 을 평평하게 편 배열, windowEndMs: 창 끝의 오디오 시간 */
-  extract(onsets: Float32Array, nFrames: number, windowEndMs: number): NoteOnset[] {
-    const { sampleRate, windowSamples, hop, keys, midiOffset } = BASIC_PITCH;
-    const frameMs = (hop / sampleRate) * 1000;
-    const windowStartMs = windowEndMs - (windowSamples / sampleRate) * 1000;
-    const lastUsable = nFrames - 1 - this.edgeFrames;
+  /** notes: 창 하나의 인식 결과, windowStartMs: 그 창의 시작 오디오 시간 */
+  update(notes: TranscribedNote[], windowStartMs: number): NoteOnset[] {
     const found: NoteOnset[] = [];
-
-    for (let f = 1; f <= lastUsable; f++) {
-      const time = windowStartMs + f * frameMs;
-      if (time <= this.confirmedUntil) continue;
-      for (let k = 0; k < keys; k++) {
-        const p = onsets[f * keys + k];
-        if (p < this.threshold) continue;
-        // 시간축 봉우리만 (앞뒤 프레임보다 크거나 같음)
-        if (p < onsets[(f - 1) * keys + k] || p < onsets[(f + 1) * keys + k]) continue;
-        const midi = k + midiOffset;
-        const last = this.lastEvent.get(midi);
-        if (last !== undefined && time - last < MIN_GAP_MS) continue;
-        this.lastEvent.set(midi, time);
-        found.push({ midi, time, prob: p });
-      }
+    for (const n of [...notes].sort((a, b) => a.startTimeSeconds - b.startTimeSeconds)) {
+      if (n.startTimeSeconds < WINDOW_HEAD_SECONDS) continue;
+      const time = windowStartMs + n.startTimeSeconds * 1000;
+      if (time < this.ignoreBeforeMs) continue;
+      const last = this.lastStart.get(n.pitchMidi);
+      if (last !== undefined && time < last + SAME_NOTE_MS) continue;
+      this.lastStart.set(n.pitchMidi, time);
+      found.push({ midi: n.pitchMidi, time, confidence: n.amplitude });
     }
-    this.confirmedUntil = Math.max(this.confirmedUntil, windowStartMs + lastUsable * frameMs);
     return found.sort((a, b) => a.time - b.time);
   }
 }
@@ -96,7 +72,7 @@ export class OnsetJudge {
   private pending: NoteOnset[] = [];
 
   constructor(
-    /** 기대하지 않은 음을 틀림으로 볼 최소 확률 (기대 음보다 엄격하게) */
+    /** 기대하지 않은 음을 틀림으로 볼 최소 세기 (약한 잡음을 틀림으로 세지 않게) */
     private wrongThreshold: number,
   ) {}
 
@@ -110,7 +86,11 @@ export class OnsetJudge {
    * 틀림은 다음 묶음까지 본 뒤에 판정한다. 화음의 음들이 몇 ms 차이로 앞뒤에 들어오고,
    * 그 사이에 분석 묶음 경계가 끼기도 하기 때문이다.
    */
-  judgeBatch(onsets: NoteOnset[], getExpected: () => number[], emit: (midi: number, verdict: Verdict) => void) {
+  judgeBatch(
+    onsets: NoteOnset[],
+    getExpected: () => number[],
+    emit: (midi: number, verdict: Verdict, onset: NoteOnset) => void,
+  ) {
     const pending: NoteOnset[] = [];
     for (const onset of onsets) {
       const expected = getExpected();
@@ -122,7 +102,7 @@ export class OnsetJudge {
         if (this.hitTimes.length > 32) this.hitTimes.shift();
         this.recentHits.set(onset.midi, onset.time);
         this.lastHit = onset.time;
-        emit(onset.midi, 'hit');
+        emit(onset.midi, 'hit', onset);
       } else {
         pending.push(onset);
       }
@@ -135,11 +115,11 @@ export class OnsetJudge {
     this.pending = pending.filter((o) => !ready.includes(o));
     for (const onset of ready) {
       if (getExpected().length === 0) continue;
-      if (onset.prob < this.wrongThreshold) continue;
+      if (onset.confidence < this.wrongThreshold) continue;
       if (this.hitTimes.some((t) => Math.abs(onset.time - t) < CHORD_WINDOW_MS)) continue;
       const recent = this.recentHits.get(onset.midi);
       if (recent !== undefined && onset.time - recent < RECENT_HIT_MS) continue;
-      emit(onset.midi, 'wrong');
+      emit(onset.midi, 'wrong', onset);
     }
   }
 

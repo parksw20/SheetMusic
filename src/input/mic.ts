@@ -1,6 +1,6 @@
 import { preferPlayAndRecord, preferPlayback } from '../audio/session';
-import { loadBasicPitch, type BasicPitchRunner } from './basicPitch';
-import { BASIC_PITCH, OnsetExtractor, OnsetJudge } from './onsets';
+import { BASIC_PITCH_INPUT_SAMPLES, BASIC_PITCH_SAMPLE_RATE, loadBasicPitch, type Transcriber } from './basicPitch';
+import { NoteTracker, OnsetJudge } from './onsets';
 import { NoteVerifier, type Sensitivity } from './pitch';
 import { resampleTail } from './resample';
 import type { NoteListener } from './types';
@@ -38,16 +38,16 @@ const BASIC_INTERVAL_MS = 20;
 const AI_INTERVAL_MS = 150;
 
 /**
- * 감도별 AI 기준값: 쳐야 할 음은 너그럽게, 틀린 음은 엄격하게.
- * 실제 피아노 녹음에서 타건은 작게 쳐도 0.86 이상이었고, 방 잡음은 여러 건반에 0.5~0.6짜리 가짜 타건을 만든다.
+ * 감도별 AI 기준값.
+ *  onset: basic-pitch outputToNotesPoly의 타건 확률 기준 (공식 기본값 0.5).
+ *    실제 피아노 녹음에서 타건은 작게 쳐도 0.86 이상이었고, 방 잡음은 여러 건반에 0.5~0.6짜리 가짜 타건을 만든다.
+ *  wrong: 기대하지 않은 음을 틀림으로 볼 최소 세기(amplitude)
  */
-const AI_THRESHOLDS: Record<Sensitivity, { expected: number; wrong: number }> = {
-  low: { expected: 0.8, wrong: 0.92 },
-  normal: { expected: 0.7, wrong: 0.85 },
-  high: { expected: 0.55, wrong: 0.8 },
+const AI_THRESHOLDS: Record<Sensitivity, { onset: number; wrong: number }> = {
+  low: { onset: 0.8, wrong: 0.6 },
+  normal: { onset: 0.7, wrong: 0.5 },
+  high: { onset: 0.55, wrong: 0.4 },
 };
-/** 이 확률 이상이면 "들린 음"으로 화면에 보여 준다 */
-const HEARD_THRESHOLD = 0.7;
 
 const TAP_WORKLET = `
 class Tap extends AudioWorkletProcessor {
@@ -168,49 +168,50 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
     }
   }, BASIC_INTERVAL_MS);
 
-  // ── AI 방식 (Basic Pitch) ──
+  // ── AI 방식 (Spotify 공식 basic-pitch-ts) ──
   let thresholds = AI_THRESHOLDS[opts.sensitivity];
   const judge = new OnsetJudge(thresholds.wrong);
-  let extractor: OnsetExtractor | null = null;
-  let runner: BasicPitchRunner | null = null;
+  let tracker: NoteTracker | null = null;
+  let transcriber: Transcriber | null = null;
   let busy = false;
   let stopped = false;
   let avgMs = 0;
-  const need = Math.ceil((BASIC_PITCH.windowSamples / BASIC_PITCH.sampleRate) * sr) + 2;
+  const need = Math.ceil((BASIC_PITCH_INPUT_SAMPLES / BASIC_PITCH_SAMPLE_RATE) * sr) + 2;
+  const windowMs = (BASIC_PITCH_INPUT_SAMPLES / BASIC_PITCH_SAMPLE_RATE) * 1000;
 
-  void modelPromise.then((r) => {
+  void modelPromise.then((t) => {
     if (stopped) return;
-    runner = r;
-    useBasic = !r;
-    opts.onStatus(r ? 'warming' : 'basic');
+    transcriber = t;
+    useBasic = !t;
+    opts.onStatus(t ? 'warming' : 'basic');
   });
 
   const aiTimer = window.setInterval(async () => {
-    if (!runner || busy || written < need) return;
+    if (!transcriber || busy || written < need) return;
     busy = true;
     try {
       const endMs = (written / sr) * 1000;
-      const audio = resampleTail(recent(need), sr, BASIC_PITCH.sampleRate, BASIC_PITCH.windowSamples);
+      const audio = resampleTail(recent(need), sr, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_INPUT_SAMPLES);
       const t0 = performance.now();
-      const { onsets, nFrames } = await runner(audio);
+      const notes = await transcriber.transcribe(audio, thresholds.onset);
       if (stopped) return;
       const ms = performance.now() - t0;
       avgMs = avgMs ? avgMs * 0.8 + ms * 0.2 : ms;
-      opts.onInferenceMs?.(avgMs, runner.backend);
-      if (!extractor) {
+      opts.onInferenceMs?.(avgMs, transcriber.backend);
+      if (!tracker) {
         // 첫 창은 통째로 버린다 (마이크를 켜기 전의 0 구간, 켜는 순간의 잡음). 이후 새로 들어온 소리부터 판정한다
-        extractor = new OnsetExtractor(thresholds.expected, undefined, endMs);
+        tracker = new NoteTracker(endMs);
         opts.onStatus('ai');
         return;
       }
-      const found = extractor.extract(onsets, nFrames, endMs);
-      for (const o of found) if (o.prob >= HEARD_THRESHOLD) opts.onHeard(o.midi);
+      const found = tracker.update(notes, endMs - windowMs);
+      for (const o of found) opts.onHeard(o.midi);
       judge.judgeBatch(found, opts.getExpected, (midi) =>
         opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic' }),
       );
     } catch (e) {
       console.warn('Basic Pitch 실행 오류, 기본 방식으로 바꿉니다', e);
-      runner = null;
+      transcriber = null;
       useBasic = true;
       opts.onStatus('basic');
     } finally {
@@ -222,7 +223,6 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
     setSensitivity: (s) => {
       basic.setSensitivity(s);
       thresholds = AI_THRESHOLDS[s];
-      extractor?.setThreshold(thresholds.expected);
       judge.setWrongThreshold(thresholds.wrong);
     },
     stop: () => {

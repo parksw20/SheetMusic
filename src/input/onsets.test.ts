@@ -1,63 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { BASIC_PITCH, OnsetExtractor, OnsetJudge } from './onsets';
+import { NoteTracker, OnsetJudge } from './onsets';
 import { resampleTail } from './resample';
 
-const { keys, midiOffset, hop, sampleRate, windowSamples } = BASIC_PITCH;
-const N_FRAMES = 172;
-const FRAME_MS = (hop / sampleRate) * 1000;
-const WINDOW_MS = (windowSamples / sampleRate) * 1000;
+/** basic-pitch 결과 한 개 (창 시작 기준 초) */
+const note = (pitchMidi: number, startTimeSeconds: number, amplitude = 0.8) => ({ pitchMidi, startTimeSeconds, amplitude });
 
-/** 창 끝 시간 endMs 기준으로, 주어진 (midi, 절대시간, 확률) 타건이 들어 있는 모델 출력을 만든다 */
-function activations(endMs: number, hits: [number, number, number][]): Float32Array {
-  const a = new Float32Array(N_FRAMES * keys);
-  const startMs = endMs - WINDOW_MS;
-  for (const [midi, time, prob] of hits) {
-    const f = Math.round((time - startMs) / FRAME_MS);
-    if (f < 0 || f >= N_FRAMES) continue;
-    const k = midi - midiOffset;
-    a[f * keys + k] = prob;
-    if (f > 0) a[(f - 1) * keys + k] = prob * 0.5;
-    if (f + 1 < N_FRAMES) a[(f + 1) * keys + k] = prob * 0.5;
-  }
-  return a;
-}
-
-describe('OnsetExtractor', () => {
-  it('창을 겹쳐 여러 번 봐도 같은 타건은 한 번만 낸다', () => {
-    const ex = new OnsetExtractor(0.5, 10);
-    const hits: [number, number, number][] = [[60, 3000, 0.9]];
-    const all = [3100, 3250, 3400, 3550, 3700].flatMap((end) => ex.extract(activations(end, hits), N_FRAMES, end));
-    expect(all.map((o) => o.midi)).toEqual([60]);
-    expect(Math.abs(all[0].time - 3000)).toBeLessThan(FRAME_MS);
+describe('NoteTracker', () => {
+  it('창이 겹쳐 같은 음이 여러 번 나와도 한 번만 낸다', () => {
+    const t = new NoteTracker();
+    // 절대 시간 3000ms에 시작한 도4가 세 창에 걸쳐 조금씩 다른 위치로 나온다
+    const a = t.update([note(60, 1.5)], 1500);
+    const b = t.update([note(60, 1.352)], 1650);
+    const c = t.update([note(60, 1.198)], 1800);
+    expect([...a, ...b, ...c].map((o) => [o.midi, Math.round(o.time)])).toEqual([[60, 3000]]);
   });
 
-  it('창 끝부분(뒤쪽 맥락이 부족한 프레임)은 다음 창에서 확정한다', () => {
-    const ex = new OnsetExtractor(0.5, 10);
-    const hits: [number, number, number][] = [[64, 3000, 0.9]];
-    expect(ex.extract(activations(3050, hits), N_FRAMES, 3050)).toEqual([]);
-    expect(ex.extract(activations(3200, hits), N_FRAMES, 3200).map((o) => o.midi)).toEqual([64]);
+  it('같은 건반을 다시 치면 새 음으로 낸다', () => {
+    const t = new NoteTracker();
+    t.update([note(64, 1.0)], 1000);
+    expect(t.update([note(64, 1.0)], 1500).map((o) => Math.round(o.time))).toEqual([2500]);
   });
 
-  it('기준보다 낮은 확률과 시작 직후 구간은 버린다', () => {
-    const ex = new OnsetExtractor(0.5, 10, 2500);
-    const hits: [number, number, number][] = [
-      [60, 2400, 0.9], // 시작 직후
-      [62, 2800, 0.3], // 약함
-      [64, 2900, 0.8],
-    ];
-    expect(ex.extract(activations(3300, hits), N_FRAMES, 3300).map((o) => o.midi)).toEqual([64]);
+  it('창 시작 직후에 시작하는 음(앞에서부터 울리던 음)과 마이크를 켜기 전 음은 버린다', () => {
+    const t = new NoteTracker(2000);
+    expect(t.update([note(60, 0.1), note(62, 0.5), note(64, 1.2)], 1000).map((o) => o.midi)).toEqual([64]);
   });
 
-  it('화음은 같은 시간의 여러 건반으로 나온다', () => {
-    const ex = new OnsetExtractor(0.5, 10);
-    const hits: [number, number, number][] = [48, 60, 64, 67].map((m) => [m, 3000, 0.9]);
-    expect(ex.extract(activations(3400, hits), N_FRAMES, 3400).map((o) => o.midi)).toEqual([48, 60, 64, 67]);
+  it('화음은 같은 시간의 여러 음으로 나온다', () => {
+    const t = new NoteTracker();
+    expect(t.update([note(67, 1), note(48, 1), note(60, 1), note(64, 1)], 0).map((o) => o.midi).sort()).toEqual([48, 60, 64, 67]);
   });
 });
 
 describe('OnsetJudge', () => {
   /** 대기 모드 연습을 흉내 낸다: 단계의 음을 모두 맞히면 다음 단계로 */
-  function practice(steps: number[][], batches: [number, number, number][][], wrongThreshold = 0.8) {
+  function practice(steps: number[][], batches: [number, number, number][][], wrongThreshold = 0.5) {
     const j = new OnsetJudge(wrongThreshold);
     let index = 0;
     let hit: number[] = [];
@@ -65,7 +42,7 @@ describe('OnsetJudge', () => {
     const expected = () => (index < steps.length ? steps[index].filter((m) => !hit.includes(m)) : []);
     for (const batch of batches) {
       j.judgeBatch(
-        batch.map(([midi, time, prob]) => ({ midi, time, prob })),
+        batch.map(([midi, time, confidence]) => ({ midi, time, confidence })),
         expected,
         (midi, verdict) => {
           log.push(`${verdict} ${midi}`);
@@ -81,8 +58,8 @@ describe('OnsetJudge', () => {
     return { log, index };
   }
 
-  it('쳐야 할 음은 확률이 낮아도 맞음, 다른 음은 확실할 때만 틀림', () => {
-    const { log } = practice([[60], [64], [64]], [[[60, 1000, 0.5]], [[62, 2000, 0.6]], [[62, 3000, 0.9]], []]);
+  it('쳐야 할 음은 약해도 맞음, 다른 음은 세기가 충분할 때만 틀림', () => {
+    const { log } = practice([[60], [64], [64]], [[[60, 1000, 0.3]], [[62, 2000, 0.4]], [[62, 3000, 0.8]], []]);
     expect(log).toEqual(['hit 60', 'wrong 62']);
   });
 

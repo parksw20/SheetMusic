@@ -49,23 +49,30 @@ iPad Safari에서 이 주소를 열고 공유 버튼 → **홈 화면에 추가*
 
 잘 안 잡히면 감도를 `높음`으로, 틀린 음이 너무 자주 나오면 `낮음`으로 바꿉니다.
 
-### 마이크 인식 방식 (AI: Spotify Basic Pitch)
+### 마이크 인식 방식 (AI: Spotify 공식 basic-pitch-ts)
 
-피아노 소리를 [Basic Pitch](https://github.com/spotify/basic-pitch-ts) 모델(TensorFlow.js, 약 0.9MB, Apache 2.0)로 분석합니다. 여러 음이 동시에 울리는 화음도 건반별로 구분합니다.
+Spotify가 공개한 [basic-pitch-ts](https://github.com/spotify/basic-pitch-ts)(npm `@spotify/basic-pitch`, Apache 2.0)를 그대로 씁니다. 여러 음이 동시에 울리는 화음도 건반별로 구분합니다.
 
-1. 마이크 소리를 끊김 없이 모읍니다 (AudioWorklet, `src/input/mic.ts`).
-2. 0.15초마다 최근 2초를 22,050Hz로 바꿔 모델에 넣고, 88건반별 "건반이 눌린 순간(onset)" 확률을 받습니다 (`src/input/basicPitch.ts`).
-3. 창을 겹쳐 가며 새 타건만 뽑고, 지금 쳐야 할 음과 비교해 맞음/틀림을 판정합니다 (`src/input/onsets.ts`).
-   - 쳐야 할 음은 확률 0.7 이상이면 맞음, 다른 음은 0.85 이상일 때만 틀림 (감도 `보통` 기준)
-   - 화음의 다른 음이나 배음이 몇 ms 차이로 잡혀도 틀림으로 세지 않고, 앞 단계를 끝낸 타건으로 다음 단계를 미리 맞히지 않습니다.
+| 단계 | 사용하는 코드 |
+|---|---|
+| 모델 실행 | 공식 `BasicPitch.evaluateModel` (TensorFlow.js) |
+| 음 추출 (시작 시간, 길이, 세기) | 공식 `outputToNotesPoly` → `noteFramesToTime` |
+| 모델 파일 | 공식 패키지의 `model/` (빌드할 때 `scripts/copy-model.mjs`가 `public/models/`로 복사) |
+| 마이크 수집, 22,050Hz 변환 | `src/input/mic.ts`, `src/input/resample.ts` |
+| 악보와 비교해 맞음/틀림 판정 | `src/input/onsets.ts` (앱 고유 로직, 단위 테스트 있음) |
 
-계산은 GPU(WebGL)와 WebAssembly 중 그 기기에서 더 빠른 쪽을 자동으로 고릅니다. 마이크 옆에 `AI 180ms · wasm`처럼 한 번 분석하는 데 걸리는 시간이 표시됩니다. 이 값이 1초를 넘으면 기기가 느린 것이라 인식이 늦어질 수 있습니다.
+1. 마이크 소리를 끊김 없이 모읍니다 (AudioWorklet).
+2. 0.15초마다 최근 1.8초를 공식 `evaluateModel` → `outputToNotesPoly`에 넣어 음 목록을 받습니다 (타건 확률 기준 0.7).
+3. 창이 겹쳐 여러 번 나오는 같은 음은 한 번만 쓰고, 창 시작에 걸친 음(앞에서부터 울리던 음)은 버립니다.
+4. 지금 쳐야 할 음이면 맞음, 아니면 세기 0.5 이상일 때만 틀림으로 봅니다. 화음이나 배음이 몇 ms 차이로 잡혀도 틀림으로 세지 않고, 앞 단계를 끝낸 타건으로 다음 단계를 미리 맞히지 않습니다.
 
-사용 순서: `🎤 마이크 켜기` → 버튼이 `🎤 AI 인식 중`으로 바뀌면(모델 준비와 소리 2초 수집, 몇 초 걸림) 연주를 시작합니다. 마이크 옆에는 확실하게 들린 음이 표시되어 인식이 되는지 바로 볼 수 있습니다.
+계산은 GPU(WebGL)와 WebAssembly 중 그 기기에서 더 빠른 쪽을 자동으로 고릅니다. 마이크 옆에 `AI 380ms · wasm`처럼 한 번 분석하는 데 걸리는 시간이 표시됩니다.
+
+사용 순서: `🎤 마이크 켜기` → 버튼이 `🎤 AI 인식 중`으로 바뀌면(모델 준비와 소리 수집, 몇 초 걸림) 연주를 시작합니다. 마이크 옆에는 들린 음이 표시되어 인식이 되는지 바로 볼 수 있습니다.
 
 AI 모델을 불러오지 못하면 예전의 스펙트럼 방식(`src/input/pitch.ts`)으로 판정하고 버튼에 `(기본)`이 붙습니다.
 
-실제 그랜드 피아노 녹음(Salamander Grand Piano)에 방 울림, 마이크 대역, 잡음을 섞어 시험한 결과:
+실제 그랜드 피아노 녹음(Salamander Grand Piano)에 방 울림, 마이크 대역, 잡음을 섞어 브라우저에서 앱 전체를 실행한 결과:
 
 | 녹음 | 맞음 | 틀림 |
 |---|---|---|
@@ -75,7 +82,7 @@ AI 모델을 불러오지 못하면 예전의 스펙트럼 방식(`src/input/pit
 | 도레미 (보통 / 작게 / 시끄러운 방) | 13/13 | 0 |
 | 도레미 중간에 틀린 음 2번 | 13/13 | 2 (정확히 잡음) |
 
-지연(건반을 누른 뒤 판정까지)은 약 0.3초입니다. 대기 모드에는 충분하지만, 템포에 맞춰 흘러가는 박자 모드를 만들면 이만큼 보정이 필요합니다.
+지연(건반을 누른 뒤 판정까지)은 약 0.5초입니다. 대기 모드에는 충분하지만, 템포에 맞춰 흘러가는 박자 모드를 만들면 이만큼 보정이 필요합니다.
 
 알려진 한계:
 - **스피커 소리**: 마이크를 켠 상태에서 `들어보기`를 하면 재생음이 마이크로 들어갑니다. 연습 중일 때만 판정하므로 채점에는 영향이 없습니다.
@@ -107,8 +114,8 @@ src/
   score/parseMusicXml.ts  MusicXML → NoteEvent[] (backup/forward, 화음, 붙임줄, 임시표)
   engine/practice.ts      대기 모드 상태 머신과 채점 (순수 함수, 테스트 있음)
   input/mic.ts            마이크 수집(AudioWorklet), AI/기본 방식 판정 연결
-  input/basicPitch.ts     Basic Pitch 모델 불러오기와 실행 (TensorFlow.js, 계산 방식 자동 선택)
-  input/onsets.ts         모델 출력에서 타건 추출, 맞음/틀림 판정 (순수 로직, 테스트 있음)
+  input/basicPitch.ts     공식 basic-pitch-ts로 인식기 만들기 (계산 방식 자동 선택)
+  input/onsets.ts         인식된 음 중복 제거, 맞음/틀림 판정 (순수 로직, 테스트 있음)
   input/resample.ts       마이크 샘플레이트 → 22,050Hz
   input/pitch.ts          기본 방식: 스펙트럼으로 기대 음 검증 (AI를 못 쓸 때)
   input/                  MIDI, 외장 키보드 입력 → 공통 NoteInput 이벤트
