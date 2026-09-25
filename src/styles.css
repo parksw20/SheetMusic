@@ -105,6 +105,7 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 .meter { width: 80px; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: var(--hit); transition: width 0.05s linear; }
 
+.diag { margin: 0; padding: 4px 20px; font-size: 13px; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 .error { color: var(--wrong); padding: 0 20px; }
 
 .score {

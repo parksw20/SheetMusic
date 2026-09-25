@@ -59,6 +59,7 @@ Spotify가 공개한 [basic-pitch-ts](https://github.com/spotify/basic-pitch-ts)
 | 음 추출 (시작 시간, 길이, 세기) | 공식 `outputToNotesPoly` → `noteFramesToTime` |
 | 모델 파일 | 공식 패키지의 `model/` (빌드할 때 `scripts/copy-model.mjs`가 `public/models/`로 복사) |
 | 마이크 수집, 22,050Hz 변환 | `src/input/mic.ts`, `src/input/resample.ts` |
+| 별도 스레드 실행 | `src/input/aiWorker.ts`, `src/input/aiClient.ts` |
 | 악보와 비교해 맞음/틀림 판정 | `src/input/onsets.ts` (앱 고유 로직, 단위 테스트 있음) |
 
 1. 마이크 소리를 끊김 없이 모읍니다 (AudioWorklet).
@@ -66,7 +67,18 @@ Spotify가 공개한 [basic-pitch-ts](https://github.com/spotify/basic-pitch-ts)
 3. 창이 겹쳐 여러 번 나오는 같은 음은 한 번만 쓰고, 창 시작에 걸친 음(앞에서부터 울리던 음)은 버립니다.
 4. 지금 쳐야 할 음이면 맞음, 아니면 세기 0.5 이상일 때만 틀림으로 봅니다. 화음이나 배음이 몇 ms 차이로 잡혀도 틀림으로 세지 않고, 앞 단계를 끝낸 타건으로 다음 단계를 미리 맞히지 않습니다.
 
-계산은 GPU(WebGL)와 WebAssembly 중 그 기기에서 더 빠른 쪽을 자동으로 고릅니다. 마이크 옆에 `AI 380ms · wasm`처럼 한 번 분석하는 데 걸리는 시간이 표시됩니다.
+분석은 **Web Worker**(별도 스레드)에서 돌아서 화면이 굳지 않습니다. 계산 방식은 WebAssembly를 먼저 쓰고(iPad의 WebGL은 16비트 정밀도라 결과가 틀어질 수 있음), 못 쓸 때만 WebGL, CPU 순으로 씁니다. AI는 앱을 열 때 백그라운드에서 미리 불러옵니다.
+
+마이크를 켜면 악보 위에 진단 줄이 나옵니다. 인식이 안 될 때 어디서 막히는지 알 수 있습니다.
+
+```
+오디오 정상 · 48kHz · 수집 worklet 48k/초 · 입력 -40dB · AI worker/wasm 380ms · 최근 인식 2음
+```
+
+- `오디오`가 `정상`이 아니면 iPad가 오디오를 멈춘 상태입니다(마이크를 껐다 켜기).
+- `수집 … 0k/초`면 소리가 안 들어옵니다. 1초 안에 안 들어오면 다른 수집 방식(`script`)으로 자동 전환합니다.
+- `입력`이 -60dB 근처에서 안 움직이면 마이크 권한이나 입력 장치 문제입니다.
+- `AI 준비 중`이 오래가면 모델을 받는 중이거나 실패한 것입니다.
 
 사용 순서: `🎤 마이크 켜기` → 버튼이 `🎤 AI 인식 중`으로 바뀌면(모델 준비와 소리 수집, 몇 초 걸림) 연주를 시작합니다. 마이크 옆에는 들린 음이 표시되어 인식이 되는지 바로 볼 수 있습니다.
 
@@ -114,7 +126,9 @@ src/
   score/parseMusicXml.ts  MusicXML → NoteEvent[] (backup/forward, 화음, 붙임줄, 임시표)
   engine/practice.ts      대기 모드 상태 머신과 채점 (순수 함수, 테스트 있음)
   input/mic.ts            마이크 수집(AudioWorklet), AI/기본 방식 판정 연결
-  input/basicPitch.ts     공식 basic-pitch-ts로 인식기 만들기 (계산 방식 자동 선택)
+  input/basicPitch.ts     공식 basic-pitch-ts로 인식기 만들기 (WebAssembly 우선)
+  input/aiWorker.ts       인식기를 Web Worker에서 실행
+  input/aiClient.ts       Worker 불러오기/요청 (미리 불러오기, 실패 시 메인 스레드)
   input/onsets.ts         인식된 음 중복 제거, 맞음/틀림 판정 (순수 로직, 테스트 있음)
   input/resample.ts       마이크 샘플레이트 → 22,050Hz
   input/pitch.ts          기본 방식: 스펙트럼으로 기대 음 검증 (AI를 못 쓸 때)
