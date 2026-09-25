@@ -28,6 +28,10 @@ export function parseMusicXml(xml: string): Score {
     doc.querySelector('movement-title')?.textContent ??
     '제목 없음';
   const composer = doc.querySelector('identification > creator[type="composer"]')?.textContent ?? '';
+  const time = doc.querySelector('part attributes time');
+  const beats = time?.querySelector('beats')?.textContent;
+  const beatType = time?.querySelector('beat-type')?.textContent;
+  const timeSignature = beats && beatType ? `${beats}/${beatType}` : '';
   const part = doc.querySelector('part');
   if (!part) throw new Error('MusicXML에 part가 없습니다.');
 
@@ -118,5 +122,5 @@ export function parseMusicXml(xml: string): Score {
   notes.sort((a, b) => a.startBeat - b.startBeat || a.midi - b.midi);
   notes.forEach((n, i) => (n.id = i));
 
-  return { title, composer, bpm: bpm || 100, notes, totalBeats: measureStart };
+  return { title, composer, bpm: bpm || 100, timeSignature, notes, totalBeats: measureStart };
 }

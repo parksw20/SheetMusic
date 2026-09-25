@@ -22,6 +22,8 @@ export interface Score {
   title: string;
   composer: string;
   bpm: number;
+  /** 예: "4/4". 악보에 박자표가 없으면 빈 문자열 */
+  timeSignature: string;
   notes: NoteEvent[];
   totalBeats: number;
 }

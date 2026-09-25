@@ -33,13 +33,17 @@ function staffNumber(g: GraphicalNote): number {
   return staff.ParentInstrument.Staves.indexOf(staff) + 1;
 }
 
-/** 배율과 "한 줄 4마디, 마디 너비 같게" 설정 */
+/** 배율과 "한 줄 4마디, 마디 너비 같게, 줄마다 칸 정렬" 설정 */
 function applyLayout(osmd: OpenSheetMusicDisplay, zoom: number) {
   osmd.Zoom = zoom;
   const rules = osmd.EngravingRules;
   rules.RenderXMeasuresPerLineAkaSystem = MEASURES_PER_LINE;
   rules.FixedMeasureWidth = true;
-  rules.StretchLastSystemLine = false;
+  // 마지막 줄도 4마디가 꽉 차면 다른 줄처럼 폭에 맞춰 늘려 칸을 맞춘다. 덜 찼으면 늘리지 않는다.
+  rules.StretchLastSystemLine = osmd.Sheet.SourceMeasures.length % MEASURES_PER_LINE === 0;
+  // 박자표는 첫 줄에만 붙어 첫 줄의 첫 칸만 넓어진다. 빼면 모든 줄이 음자리표로만 시작해
+  // 4칸이 줄마다 같은 위치에 정렬된다. 박자는 화면 상단에 따로 표시한다.
+  rules.RenderTimeSignatures = false;
 }
 
 /** 마지막 줄을 뺀 모든 줄에 4마디씩 들어갔는지 */

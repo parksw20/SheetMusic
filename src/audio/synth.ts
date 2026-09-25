@@ -1,10 +1,12 @@
 import * as Tone from 'tone';
 import type { NoteEvent } from '../score/model';
+import { preferPlayback } from './session';
 
 let synth: Tone.PolySynth | null = null;
 
 /** 브라우저 정책상 사용자 동작(클릭/키 입력) 이후에 호출해야 소리가 난다. */
 export async function ensureAudio(): Promise<void> {
+  preferPlayback(); // await 전에, 클릭 처리 안에서 동기적으로 불러야 한다
   if (Tone.getContext().state !== 'running') await Tone.start();
   if (!synth) {
     synth = new Tone.PolySynth(Tone.Synth, {

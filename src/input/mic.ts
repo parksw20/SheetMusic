@@ -1,3 +1,4 @@
+import { preferPlayAndRecord, preferPlayback } from '../audio/session';
 import { NoteVerifier, type Sensitivity } from './pitch';
 import type { NoteListener } from './types';
 
@@ -26,6 +27,7 @@ export async function startMic(
   onLevel: (level: number) => void,
   sensitivity: Sensitivity,
 ): Promise<MicSession> {
+  preferPlayAndRecord();
   const stream = await navigator.mediaDevices.getUserMedia({
     // 음성 통화용 처리를 끄지 않으면 지속음이 깎이고 음량이 출렁인다
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
@@ -60,6 +62,7 @@ export async function startMic(
   return {
     setSensitivity: (s) => verifier.setSensitivity(s),
     stop: () => {
+      preferPlayback();
       window.clearInterval(timer);
       stream.getTracks().forEach((t) => t.stop());
       void ctx.close();

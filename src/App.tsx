@@ -358,6 +358,7 @@ export default function App() {
             <span className="title">
               {score?.title}
               {score?.composer && <small> · {score.composer}</small>}
+              {score?.timeSignature && <small> · {score.timeSignature}박자</small>}
             </span>
           </>
         )}
