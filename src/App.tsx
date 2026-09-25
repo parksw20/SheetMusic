@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ensureAudio, noteOff, noteOn, playNotes } from './audio/synth';
-import { PianoKeyboard } from './components/PianoKeyboard';
 import { ResultPanel } from './components/ResultPanel';
 import { ScoreView } from './components/ScoreView';
 import {
@@ -14,9 +13,16 @@ import {
 import { listenComputerKeyboard } from './input/computerKeyboard';
 import { connectMidi, isMidiSupported, type MidiConnection } from './input/midi';
 import type { NoteInput } from './input/types';
-import { buildSteps, filterByHand, type HandFilter, type Score } from './score/model';
+import {
+  buildSteps,
+  filterByHand,
+  midiToName,
+  midiToSolfege,
+  type HandFilter,
+  type Score,
+} from './score/model';
 import { parseMusicXml } from './score/parseMusicXml';
-import { loadBestStars, saveBestStars } from './storage';
+import { loadBestStars, loadZoom, saveBestStars, saveZoom } from './storage';
 
 interface SongInfo {
   file: string;
@@ -32,6 +38,9 @@ const HANDS: { value: HandFilter; label: string }[] = [
   { value: 'left', label: '왼손' },
 ];
 
+const ZOOM_MIN = 0.8;
+const ZOOM_MAX = 2.4;
+
 export default function App() {
   const [songs, setSongs] = useState<SongInfo[]>([]);
   const [songKey, setSongKey] = useState<string>('');
@@ -41,16 +50,16 @@ export default function App() {
 
   const [hand, setHand] = useState<HandFilter>('both');
   const [tempo, setTempo] = useState(100); // %
+  const [zoom, setZoom] = useState(loadZoom);
   const [mode, setMode] = useState<Mode>('idle');
   const [practice, setPractice] = useState<PracticeState | null>(null);
+  const [resetKey, setResetKey] = useState(0);
   const [demoBeat, setDemoBeat] = useState(0);
   const [showResult, setShowResult] = useState(false);
   const [bestStars, setBestStars] = useState<Record<string, number>>(loadBestStars);
 
-  const [pressed, setPressed] = useState<Set<number>>(new Set());
   const [wrong, setWrong] = useState<number | null>(null);
-  const [showNames, setShowNames] = useState(true);
-  const [keyboardBase, setKeyboardBase] = useState(60);
+  const [showHint, setShowHint] = useState(true);
   const [midiDevices, setMidiDevices] = useState<string[] | null>(null);
   const [midiError, setMidiError] = useState<string | null>(null);
   const [soundForMidi, setSoundForMidi] = useState(false);
@@ -60,6 +69,7 @@ export default function App() {
   const stopDemoRef = useRef<(() => void) | null>(null);
   const midiRef = useRef<MidiConnection | null>(null);
   const wrongTimer = useRef<number | undefined>(undefined);
+  const keyboardBase = useRef(60);
 
   // 곡 목록
   useEffect(() => {
@@ -100,6 +110,7 @@ export default function App() {
     setMode('idle');
     setPractice(null);
     setDemoBeat(0);
+    setResetKey((k) => k + 1);
   }, []);
 
   // 곡이나 손을 바꾸면 진행 중인 연습/재생을 멈춘다
@@ -108,8 +119,10 @@ export default function App() {
   const startPractice = async () => {
     await ensureAudio();
     stopDemoRef.current?.();
+    stopDemoRef.current = null;
     setShowResult(false);
     setPractice(createPractice(steps));
+    setResetKey((k) => k + 1);
     setMode('practice');
   };
 
@@ -125,18 +138,20 @@ export default function App() {
     });
   };
 
+  const changeZoom = (delta: number) => {
+    setZoom((z) => {
+      const next = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta)) * 10) / 10;
+      saveZoom(next);
+      return next;
+    });
+  };
+
   const handleNote = useCallback(
     (e: NoteInput) => {
       if (e.source !== 'midi' || soundForMidi) {
         if (e.type === 'on') void ensureAudio().then(() => noteOn(e.midi, e.velocity));
         else noteOff(e.midi);
       }
-      setPressed((prev) => {
-        const next = new Set(prev);
-        if (e.type === 'on') next.add(e.midi);
-        else next.delete(e.midi);
-        return next;
-      });
       if (e.type !== 'on') return;
 
       const current = practiceRef.current;
@@ -147,7 +162,7 @@ export default function App() {
       if (result === 'wrong') {
         setWrong(e.midi);
         window.clearTimeout(wrongTimer.current);
-        wrongTimer.current = window.setTimeout(() => setWrong(null), 400);
+        wrongTimer.current = window.setTimeout(() => setWrong(null), 500);
       }
       if (isFinished(state) && !isFinished(current)) setShowResult(true);
     },
@@ -167,15 +182,13 @@ export default function App() {
     });
   }, [practice, songKey, hand]);
 
-  // 컴퓨터 키보드
-  const baseRef = useRef(keyboardBase);
-  baseRef.current = keyboardBase;
+  // 컴퓨터(외장) 키보드
   useEffect(
     () =>
       listenComputerKeyboard(
         handleNote,
-        () => baseRef.current,
-        (d) => setKeyboardBase((b) => Math.min(96, Math.max(24, b + d))),
+        () => keyboardBase.current,
+        (d) => (keyboardBase.current = Math.min(96, Math.max(24, keyboardBase.current + d))),
       ),
     [handleNote],
   );
@@ -201,34 +214,17 @@ export default function App() {
     loadXml(await file.text());
   };
 
-  // 건반 범위: 곡의 음역을 옥타브 단위로 넓혀서 최소 2옥타브
-  const [rangeFrom, rangeTo] = useMemo(() => {
-    const midis = score?.notes.map((n) => n.midi) ?? [];
-    let lo = Math.floor(Math.min(60, ...midis) / 12) * 12;
-    let hi = Math.ceil((Math.max(71, ...midis) + 1) / 12) * 12 - 1;
-    if (hi - lo < 23) hi = lo + 23;
-    lo = Math.max(21, lo);
-    return [lo, Math.min(108, hi)];
-  }, [score]);
-
   const step = practice ? currentStep(practice) : undefined;
-  const expected =
-    mode === 'practice' && step
-      ? step.notes.map((n) => n.midi)
-      : mode === 'demo'
-        ? (steps.find((s) => s.startBeat === demoBeat)?.notes.map((n) => n.midi) ?? [])
-        : [];
-  const cursorBeat = mode === 'practice' ? (step?.startBeat ?? score?.totalBeats ?? 0) : mode === 'demo' ? demoBeat : 0;
+  const cursorBeat =
+    mode === 'practice' ? (step?.startBeat ?? score?.totalBeats ?? 0) : mode === 'demo' ? demoBeat : 0;
   const progress = practice && steps.length ? Math.round((practice.index / steps.length) * 100) : 0;
+  const practicing = mode === 'practice';
 
   return (
     <div className="app">
-      <header className="toolbar">
-        <h1>🎹 SheetMusic</h1>
-
-        <label>
-          곡
-          <select value={songKey} onChange={(e) => setSongKey(e.target.value)}>
+      {!practicing && (
+        <header className="toolbar">
+          <select className="song" value={songKey} onChange={(e) => setSongKey(e.target.value)} aria-label="곡">
             {songs.map((s) => {
               const stars = bestStars[`${s.file}#both`];
               return (
@@ -240,98 +236,128 @@ export default function App() {
             })}
             {songKey.startsWith('upload:') && <option value={songKey}>{songKey.slice(7)}</option>}
           </select>
-        </label>
 
-        <label className="upload">
-          MusicXML 열기
-          <input
-            type="file"
-            accept=".musicxml,.xml"
-            onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
-          />
-        </label>
+          <label className="button">
+            악보 열기
+            <input
+              type="file"
+              accept=".musicxml,.xml"
+              onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
+            />
+          </label>
 
-        <div className="segmented" role="group" aria-label="연습할 손">
-          {HANDS.map((h) => (
-            <button key={h.value} className={hand === h.value ? 'active' : ''} onClick={() => setHand(h.value)}>
-              {h.label}
-            </button>
-          ))}
-        </div>
+          <div className="segmented" role="group" aria-label="연습할 손">
+            {HANDS.map((h) => (
+              <button key={h.value} className={hand === h.value ? 'active' : ''} onClick={() => setHand(h.value)}>
+                {h.label}
+              </button>
+            ))}
+          </div>
 
-        <label>
-          템포 {tempo}%
-          <input type="range" min={40} max={150} step={10} value={tempo} onChange={(e) => setTempo(Number(e.target.value))} />
-        </label>
+          <label className="tempo">
+            템포 {tempo}%
+            <input
+              type="range"
+              min={40}
+              max={150}
+              step={10}
+              value={tempo}
+              onChange={(e) => setTempo(Number(e.target.value))}
+            />
+          </label>
 
-        <label className="check">
-          <input type="checkbox" checked={showNames} onChange={(e) => setShowNames(e.target.checked)} />
-          계이름
-        </label>
-      </header>
+          <label className="check">
+            <input type="checkbox" checked={showHint} onChange={(e) => setShowHint(e.target.checked)} />
+            다음 음 표시
+          </label>
+
+          <span className="midi">
+            {midiDevices ? (
+              <>
+                {midiDevices.length ? `🎛 ${midiDevices.join(', ')}` : '🎛 연결된 MIDI 장치 없음'}
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={soundForMidi}
+                    onChange={(e) => setSoundForMidi(e.target.checked)}
+                  />
+                  입력음 재생
+                </label>
+              </>
+            ) : isMidiSupported() ? (
+              <button onClick={connectMidiDevice}>MIDI 연결</button>
+            ) : (
+              'MIDI 미지원 브라우저'
+            )}
+            {midiError && <span className="error">{midiError}</span>}
+          </span>
+        </header>
+      )}
 
       <section className="controls">
         {mode === 'idle' && (
           <>
             <button className="primary" onClick={startPractice} disabled={!steps.length}>
-              ▶ 연습 시작 (대기 모드)
+              ▶ 연습 시작
             </button>
             <button onClick={startDemo} disabled={!steps.length}>
               ♪ 들어보기
             </button>
-          </>
-        )}
-        {mode !== 'idle' && <button onClick={stopAll}>■ 멈추기</button>}
-        {mode === 'practice' && practice && (
-          <>
-            <button onClick={startPractice}>↺ 처음부터</button>
-            <div className="progress" aria-label="진행률">
-              <div style={{ width: `${progress}%` }} />
-            </div>
-            <span className="stat">
-              ✔ {practice.correct} ✘ {practice.wrong}
+            <span className="title">
+              {score?.title}
+              {score?.composer && <small> · {score.composer}</small>}
             </span>
           </>
         )}
+        {mode === 'demo' && <button onClick={stopAll}>■ 멈추기</button>}
+        {practicing && practice && (
+          <>
+            <button onClick={stopAll}>■ 그만하기</button>
+            <button onClick={startPractice}>↺ 처음부터</button>
+            <div className="progress" aria-label={`진행률 ${progress}%`}>
+              <div style={{ width: `${progress}%` }} />
+            </div>
+            <span className="stat">
+              <span className="ok">✔ {practice.correct}</span> <span className="ng">✘ {practice.wrong}</span>
+            </span>
+            {showHint && step && (
+              <span className={`next${wrong !== null ? ' wrong' : ''}`} aria-live="polite">
+                {wrong !== null
+                  ? `✘ ${midiToSolfege(wrong)} (${midiToName(wrong)})`
+                  : step.notes.map((n) => (
+                      <span key={n.id} className={practice.hit.includes(n.midi) ? 'done' : ''}>
+                        {midiToSolfege(n.midi)}
+                        <small>{midiToName(n.midi)}</small>
+                      </span>
+                    ))}
+              </span>
+            )}
+          </>
+        )}
 
-        <span className="midi">
-          {midiDevices ? (
-            midiDevices.length ? `🎛 ${midiDevices.join(', ')}` : '🎛 연결된 MIDI 장치 없음'
-          ) : isMidiSupported() ? (
-            <button onClick={connectMidiDevice}>MIDI 키보드 연결</button>
-          ) : (
-            '이 브라우저는 MIDI를 지원하지 않아요 (Chrome/Edge 권장)'
-          )}
-          {midiDevices && (
-            <label className="check">
-              <input type="checkbox" checked={soundForMidi} onChange={(e) => setSoundForMidi(e.target.checked)} />
-              MIDI 입력음 재생
-            </label>
-          )}
-          {midiError && <span className="error">{midiError}</span>}
+        <span className="zoom" role="group" aria-label="악보 크기">
+          <button onClick={() => changeZoom(-0.1)} disabled={zoom <= ZOOM_MIN} aria-label="작게">
+            −
+          </button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <button onClick={() => changeZoom(0.1)} disabled={zoom >= ZOOM_MAX} aria-label="크게">
+            +
+          </button>
         </span>
       </section>
 
       {loadError && <p className="error">{loadError}</p>}
-      {xml && <ScoreView xml={xml} cursorBeat={cursorBeat} />}
-
-      <footer className="keyboard-area">
-        <PianoKeyboard
-          from={rangeFrom}
-          to={rangeTo}
-          expected={expected}
-          hit={practice?.hit ?? []}
-          pressed={pressed}
-          wrong={wrong}
-          showNames={showNames}
-          keyboardBase={keyboardBase}
-          onNoteOn={(midi) => handleNote({ type: 'on', midi, velocity: 0.8, source: 'screen' })}
-          onNoteOff={(midi) => handleNote({ type: 'off', midi, velocity: 0, source: 'screen' })}
+      {xml && (
+        <ScoreView
+          xml={xml}
+          cursorBeat={cursorBeat}
+          zoom={zoom}
+          markPassed={practicing}
+          hand={hand}
+          resetKey={resetKey}
+          wrongFlash={wrong !== null}
         />
-        <p className="help">
-          컴퓨터 키보드: A~; 흰 건반, W E T Y U O P 검은 건반, Z/X 옥타브 이동
-        </p>
-      </footer>
+      )}
 
       {showResult && practice && (
         <ResultPanel
