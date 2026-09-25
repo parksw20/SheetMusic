@@ -1,3 +1,5 @@
+import type { Sensitivity } from './input/pitch';
+
 const BEST_KEY = 'sheetmusic.bestStars';
 
 /** 곡별 최고 별점. 키는 `${곡 파일}#${손}` */
@@ -33,6 +35,25 @@ export function loadZoom(): number {
 export function saveZoom(value: number): void {
   try {
     localStorage.setItem(ZOOM_KEY, String(value));
+  } catch {
+    // 무시
+  }
+}
+
+const SENSITIVITY_KEY = 'sheetmusic.micSensitivity';
+
+export function loadSensitivity(): Sensitivity {
+  try {
+    const v = localStorage.getItem(SENSITIVITY_KEY);
+    return v === 'low' || v === 'high' ? v : 'normal';
+  } catch {
+    return 'normal';
+  }
+}
+
+export function saveSensitivity(value: Sensitivity): void {
+  try {
+    localStorage.setItem(SENSITIVITY_KEY, value);
   } catch {
     // 무시
   }

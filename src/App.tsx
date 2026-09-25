@@ -11,7 +11,9 @@ import {
   type PracticeState,
 } from './engine/practice';
 import { listenComputerKeyboard } from './input/computerKeyboard';
+import { isMicSupported, startMic, type MicSession } from './input/mic';
 import { connectMidi, isMidiSupported, type MidiConnection } from './input/midi';
+import type { Sensitivity } from './input/pitch';
 import type { NoteInput } from './input/types';
 import {
   buildSteps,
@@ -22,7 +24,7 @@ import {
   type Score,
 } from './score/model';
 import { parseMusicXml } from './score/parseMusicXml';
-import { loadBestStars, loadZoom, saveBestStars, saveZoom } from './storage';
+import { loadBestStars, loadSensitivity, loadZoom, saveBestStars, saveSensitivity, saveZoom } from './storage';
 
 interface SongInfo {
   file: string;
@@ -36,6 +38,12 @@ const HANDS: { value: HandFilter; label: string }[] = [
   { value: 'both', label: '양손' },
   { value: 'right', label: '오른손' },
   { value: 'left', label: '왼손' },
+];
+
+const SENSITIVITIES: { value: Sensitivity; label: string }[] = [
+  { value: 'low', label: '낮음' },
+  { value: 'normal', label: '보통' },
+  { value: 'high', label: '높음' },
 ];
 
 const ZOOM_MIN = 0.8;
@@ -63,6 +71,9 @@ export default function App() {
   const [midiDevices, setMidiDevices] = useState<string[] | null>(null);
   const [midiError, setMidiError] = useState<string | null>(null);
   const [soundForMidi, setSoundForMidi] = useState(false);
+  const [micOn, setMicOn] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [sensitivity, setSensitivity] = useState<Sensitivity>(loadSensitivity);
 
   const practiceRef = useRef(practice);
   practiceRef.current = practice;
@@ -70,6 +81,8 @@ export default function App() {
   const midiRef = useRef<MidiConnection | null>(null);
   const wrongTimer = useRef<number | undefined>(undefined);
   const keyboardBase = useRef(60);
+  const micRef = useRef<MicSession | null>(null);
+  const micLevelRef = useRef<HTMLDivElement>(null);
 
   // 곡 목록
   useEffect(() => {
@@ -148,7 +161,8 @@ export default function App() {
 
   const handleNote = useCallback(
     (e: NoteInput) => {
-      if (e.source !== 'midi' || soundForMidi) {
+      // 마이크 입력은 이미 피아노 소리가 나고, 다시 재생하면 마이크로 되돌아 들어간다
+      if (e.source === 'keyboard' || (e.source === 'midi' && soundForMidi)) {
         if (e.type === 'on') void ensureAudio().then(() => noteOn(e.midi, e.velocity));
         else noteOff(e.midi);
       }
@@ -206,6 +220,45 @@ export default function App() {
     } catch {
       setMidiError('MIDI 권한이 거부되었거나 사용할 수 없습니다.');
     }
+  };
+
+  // 마이크: 연습 중일 때만 아직 안 친 기대 음을 넘긴다
+  const toggleMic = async () => {
+    if (micRef.current) {
+      micRef.current.stop();
+      micRef.current = null;
+      setMicOn(false);
+      return;
+    }
+    try {
+      micRef.current = await startMic(
+        (e) => handleNoteRef.current(e),
+        () => {
+          const p = practiceRef.current;
+          const s = p && !isFinished(p) ? currentStep(p) : undefined;
+          return s ? s.notes.map((n) => n.midi).filter((m) => !p!.hit.includes(m)) : [];
+        },
+        (level) => {
+          if (micLevelRef.current) micLevelRef.current.style.width = `${Math.round(level * 100)}%`;
+        },
+        sensitivity,
+      );
+      setMicOn(true);
+      setMicError(null);
+    } catch {
+      setMicError(
+        window.isSecureContext
+          ? '마이크 권한이 거부되었습니다. 설정에서 마이크를 허용해 주세요.'
+          : '마이크는 HTTPS 주소에서만 쓸 수 있어요. (npm run dev:ipad 참고)',
+      );
+    }
+  };
+  useEffect(() => () => micRef.current?.stop(), []);
+
+  const changeSensitivity = (s: Sensitivity) => {
+    setSensitivity(s);
+    saveSensitivity(s);
+    micRef.current?.setSensitivity(s);
   };
 
   const onUpload = async (file: File) => {
@@ -284,10 +337,8 @@ export default function App() {
                   입력음 재생
                 </label>
               </>
-            ) : isMidiSupported() ? (
-              <button onClick={connectMidiDevice}>MIDI 연결</button>
             ) : (
-              'MIDI 미지원 브라우저'
+              isMidiSupported() && <button onClick={connectMidiDevice}>MIDI 연결</button>
             )}
             {midiError && <span className="error">{midiError}</span>}
           </span>
@@ -335,6 +386,30 @@ export default function App() {
           </>
         )}
 
+        {isMicSupported() && (
+          <span className="mic">
+            <button className={micOn ? 'active' : ''} onClick={toggleMic} aria-pressed={micOn}>
+              {micOn ? '🎤 듣는 중' : '🎤 마이크 켜기'}
+            </button>
+            {micOn && (
+              <span className="meter" aria-hidden>
+                <span ref={micLevelRef} />
+              </span>
+            )}
+            <select
+              value={sensitivity}
+              onChange={(e) => changeSensitivity(e.target.value as Sensitivity)}
+              aria-label="마이크 감도"
+            >
+              {SENSITIVITIES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  감도 {s.label}
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+
         <span className="zoom" role="group" aria-label="악보 크기">
           <button onClick={() => changeZoom(-0.1)} disabled={zoom <= ZOOM_MIN} aria-label="작게">
             −
@@ -347,6 +422,7 @@ export default function App() {
       </section>
 
       {loadError && <p className="error">{loadError}</p>}
+      {micError && <p className="error">{micError}</p>}
       {xml && (
         <ScoreView
           xml={xml}

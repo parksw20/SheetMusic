@@ -1,4 +1,4 @@
-export type InputSource = 'midi' | 'keyboard' | 'screen';
+export type InputSource = 'midi' | 'keyboard' | 'mic';
 
 export interface NoteInput {
   type: 'on' | 'off';

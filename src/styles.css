@@ -56,7 +56,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 select.song { flex: 0 1 360px; min-width: 160px; }
 /* iPad 가로 화면에서는 윗줄을 한 줄로 유지 */
 @media (min-width: 1100px) {
-  .toolbar { flex-wrap: nowrap; }
+  .toolbar, .controls { flex-wrap: nowrap; }
+  .controls > * { flex-shrink: 0; }
+  .controls > .title, .controls > .progress { flex-shrink: 1; }
   .toolbar > * { flex-shrink: 0; }
   .toolbar > select.song { flex-shrink: 1; }
 }
@@ -72,7 +74,7 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 
 .midi { margin-left: auto; display: flex; white-space: nowrap; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
 
-.title { font-weight: 600; }
+.title { font-weight: 600; flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .title small { color: var(--muted); font-weight: 400; }
 
 .progress { flex: 1; min-width: 120px; max-width: 360px; height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
@@ -95,6 +97,11 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 .next .done { color: var(--hit); }
 .next.wrong { background: #fef2f2; color: var(--wrong); }
 
+.mic { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
+.mic button.active { background: #dcfce7; border-color: var(--hit); color: #166534; font-weight: 600; }
+.meter { width: 80px; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: var(--hit); transition: width 0.05s linear; }
+.mic + .zoom { margin-left: 0; }
 .zoom { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .zoom button { width: 44px; padding: 0; font-size: 22px; }
 .zoom span { min-width: 52px; text-align: center; color: var(--muted); font-size: 15px; }
