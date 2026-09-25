@@ -27,10 +27,19 @@ npm test         # 단위 테스트 (파서, 채점 엔진)
 npm run build    # 타입 검사 + 프로덕션 빌드
 ```
 
+## 배포 (GitHub Pages)
+
+`main` 브랜치에 푸시하면 `.github/workflows/deploy.yml`이 테스트와 빌드를 거쳐 GitHub Pages에 올립니다.
+처음 한 번은 저장소 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 바꿔야 합니다.
+
+배포 주소: https://parksw20.github.io/SheetMusic/
+
+iPad Safari에서 이 주소를 열고 공유 버튼 → **홈 화면에 추가**를 하면 앱처럼 전체 화면으로 쓸 수 있습니다. HTTPS 주소라서 마이크도 바로 동작합니다.
+
 ## iPad에서 마이크로 연습하기
 
-1. PC에서 `npm run dev:ipad`를 실행하고, 표시되는 `Network` 주소(`https://192.168.x.x:5173`)를 iPad Safari로 엽니다.
-2. 자체 서명 인증서라서 경고가 나옵니다. **세부사항 보기 → 이 웹 사이트 방문**을 누릅니다. 마이크는 HTTPS에서만 동작합니다.
+1. 배포 주소를 열거나, 개발 중이라면 PC에서 `npm run dev:ipad`를 실행하고, 표시되는 `Network` 주소(`https://192.168.x.x:5173`)를 iPad Safari로 엽니다.
+2. (`dev:ipad`만 해당) 자체 서명 인증서라서 경고가 나옵니다. **세부사항 보기 → 이 웹 사이트 방문**을 누릅니다. 마이크는 HTTPS에서만 동작합니다.
 3. `연습 시작`을 누르고 `🎤 마이크 켜기`를 누른 뒤 마이크 권한을 허용합니다.
 4. iPad를 피아노 보면대에 두고 연주합니다. 레벨 막대가 움직이는지 확인하세요.
 
