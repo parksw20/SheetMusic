@@ -59,6 +59,8 @@ export default function App() {
   const [hand, setHand] = useState<HandFilter>('both');
   const [tempo, setTempo] = useState(100); // %
   const [zoom, setZoom] = useState(loadZoom);
+  /** 한 줄 4마디가 들어가도록 실제로 적용된 배율 (zoom 이하) */
+  const [fitZoom, setFitZoom] = useState(zoom);
   const [mode, setMode] = useState<Mode>('idle');
   const [practice, setPractice] = useState<PracticeState | null>(null);
   const [resetKey, setResetKey] = useState(0);
@@ -152,11 +154,10 @@ export default function App() {
   };
 
   const changeZoom = (delta: number) => {
-    setZoom((z) => {
-      const next = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta)) * 10) / 10;
-      saveZoom(next);
-      return next;
-    });
+    // 화면에 보이는 배율에서 움직인다 (4마디를 맞추느라 줄어든 경우 포함)
+    const next = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, fitZoom + delta)) * 10) / 10;
+    setZoom(next);
+    saveZoom(next);
   };
 
   const handleNote = useCallback(
@@ -411,11 +412,16 @@ export default function App() {
         )}
 
         <span className="zoom" role="group" aria-label="악보 크기">
-          <button onClick={() => changeZoom(-0.1)} disabled={zoom <= ZOOM_MIN} aria-label="작게">
+          <button onClick={() => changeZoom(-0.1)} disabled={fitZoom <= ZOOM_MIN} aria-label="작게">
             −
           </button>
-          <span>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => changeZoom(0.1)} disabled={zoom >= ZOOM_MAX} aria-label="크게">
+          <span>{Math.round(fitZoom * 100)}%</span>
+          {/* 한 줄 4마디가 들어가는 최대 배율이면 더 키울 수 없다 */}
+          <button
+            onClick={() => changeZoom(0.1)}
+            disabled={fitZoom >= ZOOM_MAX || fitZoom < zoom}
+            aria-label="크게"
+          >
             +
           </button>
         </span>
@@ -428,6 +434,7 @@ export default function App() {
           xml={xml}
           cursorBeat={cursorBeat}
           zoom={zoom}
+          onFitZoom={setFitZoom}
           markPassed={practicing}
           hand={hand}
           resetKey={resetKey}
