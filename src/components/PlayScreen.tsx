@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { ensureAudio, noteOff, noteOn, playClicks, playNotes } from '../audio/synth';
+import { ensureAudio, noteOff, noteOn, playClicks, playNotes, playbackSeconds } from '../audio/synth';
 import { createPractice, currentStep, isFinished, pressKey, summarize, type PracticeState } from '../engine/practice';
 import { RhythmSession, type RhythmResult } from '../engine/rhythm';
 import type { NoteInput } from '../input/types';
@@ -201,10 +201,13 @@ export function PlayScreen({ xml, score, settings, onSettings, bridge, onFinishe
     stopAll();
     setMode('demo');
     const shifted = rangeNotes.map((n) => ({ ...n, startBeat: n.startBeat - rangeStart }));
-    // 재생은 0.1초 뒤 시작. 막대는 시간으로 부드럽게 움직인다
-    const t0 = performance.now() + 100;
-    const msPerBeat = 60000 / bpm;
-    const timer = window.setInterval(() => setDemoBeat(rangeStart + Math.max(0, performance.now() - t0) / msPerBeat), FRAME_MS);
+    // 막대는 오디오 시계(지금 들리는 위치)를 따라 부드럽게 움직인다
+    const secPerBeat = 60 / bpm;
+    setDemoBeat(rangeStart);
+    const timer = window.setInterval(() => {
+      const sec = playbackSeconds();
+      if (sec !== null) setDemoBeat(rangeStart + sec / secPerBeat);
+    }, FRAME_MS);
     const stopPlay = playNotes(
       shifted,
       bpm,
@@ -451,6 +454,7 @@ export function PlayScreen({ xml, score, settings, onSettings, bridge, onFinishe
         selecting={selecting}
         onSelectLoop={chooseLoop}
         playhead={mode === 'rhythm' || mode === 'demo' ? cursorBeat : null}
+        playing={mode === 'demo'}
       />
 
       {result && (

@@ -88,6 +88,19 @@ export function playNotes(
   };
 }
 
+/**
+ * 재생 중인 곡에서 지금 스피커로 들리는 위치 (초). 멈춰 있으면 null.
+ * 오디오 시계로 재므로 화면 막대가 소리와 어긋나지 않는다 (스피커 출력 지연도 뺀다).
+ */
+export function playbackSeconds(): number | null {
+  const transport = Tone.getTransport();
+  if (transport.state !== 'started') return null;
+  const ctx = Tone.getContext();
+  const raw = ctx.rawContext as AudioContext;
+  const latency = (raw.outputLatency || raw.baseLatency || 0) as number;
+  return Math.max(0, transport.getSecondsAtTime(ctx.currentTime - latency));
+}
+
 let clicker: Tone.NoiseSynth | null = null;
 
 /**

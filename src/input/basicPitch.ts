@@ -145,6 +145,8 @@ export interface FullNote {
   startTimeSeconds: number;
   durationSeconds: number;
   amplitude: number;
+  /** 음높이 흔들림 (반음). 사람 목소리·떨림이 있는 악기는 크다 */
+  wobble: number;
 }
 
 /**
@@ -152,25 +154,33 @@ export interface FullNote {
  * outputToNotesPoly → noteFramesToTime. 공식 2초 모델을 따로 불러 쓴다(실시간 인식은 1.5초로 바꾼 모델).
  */
 async function transcribeWith(model: Promise<GraphModel>, audio: Float32Array, onProgress: (p: number) => void): Promise<FullNote[]> {
-  const { BasicPitch, outputToNotesPoly, noteFramesToTime } = await import('@spotify/basic-pitch');
+  const { BasicPitch, outputToNotesPoly, noteFramesToTime, addPitchBendsToNoteEvents } = await import('@spotify/basic-pitch');
   const bp = new BasicPitch(model);
   const frames: number[][] = [];
   const onsets: number[][] = [];
+  const contours: number[][] = [];
   await bp.evaluateModel(
     audio,
-    (f, o) => {
+    (f, o, c) => {
       frames.push(...f);
       onsets.push(...o);
+      contours.push(...c);
     },
     onProgress,
   );
-  // 공식 데모 기본값(타건 0.5, 지속 0.3)에 짧은 잡음 음을 줄이려고 최소 길이만 8프레임(약 0.09초)으로
-  return noteFramesToTime(outputToNotesPoly(frames, onsets, 0.5, 0.3, 8)).map((n) => ({
-    pitchMidi: n.pitchMidi,
-    startTimeSeconds: n.startTimeSeconds,
-    durationSeconds: n.durationSeconds,
-    amplitude: n.amplitude,
-  }));
+  // 공식 데모 기본값(타건 0.5, 지속 0.3)에 짧은 잡음 음을 줄이려고 최소 길이만 8프레임(약 0.09초)으로.
+  // 공식 addPitchBendsToNoteEvents로 음마다 음높이 곡선(반음 1/3 단위)을 붙여 흔들림(목소리·떨림)을 잰다
+  const notes = addPitchBendsToNoteEvents(contours, outputToNotesPoly(frames, onsets, 0.5, 0.3, 8));
+  return noteFramesToTime(notes).map((n) => {
+    const bends = (n.pitchBends ?? []).slice(0, WOBBLE_FRAMES);
+    return {
+      pitchMidi: n.pitchMidi,
+      startTimeSeconds: n.startTimeSeconds,
+      durationSeconds: n.durationSeconds,
+      amplitude: n.amplitude,
+      wobble: bends.length ? (Math.max(...bends) - Math.min(...bends)) / 3 : 0,
+    };
+  });
 }
 
 type Tf = typeof import('@tensorflow/tfjs');

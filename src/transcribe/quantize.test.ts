@@ -51,4 +51,23 @@ describe('notesToSong', () => {
     const { noteCount } = notesToSong([...scale(), note(90, 1.1, 0.2, 0.05)], '테스트', 120);
     expect(noteCount).toBe(11);
   });
+
+  it('8분음표 격자(기본): 16분음표 차이로 붙은 두 타건은 센 쪽만 남긴다', () => {
+    // 120BPM, 16분음표 = 0.125초
+    const notes = [note(60, 0, 0.45), note(64, 0.375, 0.5, 0.7), note(62, 0.5, 0.4, 0.3), note(65, 1, 0.45), note(67, 1.5, 0.45)];
+    expect(notesToSong(notes, '테스트', 120).song.measures[0].rh).toBe('C4:q E4:q F4:q G4:q');
+    expect(notesToSong(notes, '테스트', 120, undefined, 4, { grid: 16 }).song.measures[0].rh).toBe('C4:e. E4:s D4:q F4:q G4:q');
+  });
+
+  it('멜로디+베이스: 오른손은 맨 위, 왼손은 맨 아래 음만', () => {
+    const notes = [note(60, 0, 1.9), note(64, 0, 1.9), note(67, 0, 1.9), note(48, 0, 1.9), note(55, 0, 1.9)];
+    const { song } = notesToSong(notes, '테스트', 120, undefined, 4, { simplify: true });
+    expect(song.measures[0].rh).toBe('G4:w');
+    expect(song.measures[0].lh).toBe('C3:w');
+  });
+
+  it('음높이가 흔들리는 소리(목소리)는 뺀다', () => {
+    const { noteCount } = notesToSong([...scale(), { ...note(72, 1.1, 0.4), wobble: 1.2 }], '테스트', 120);
+    expect(noteCount).toBe(11);
+  });
 });
