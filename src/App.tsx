@@ -289,6 +289,9 @@ export default function App() {
               )}
             </button>
           )}
+          <span className="tb-version" title={`앱 버전 · ${versionLabel(CURRENT)}`}>
+            v{CURRENT.version}
+          </span>
           <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="설정">
             <GearIcon />
           </button>
