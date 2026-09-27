@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MODEL_URL } from '../input/mic';
 import { songXml } from '../score/buildMusicXml';
-import { decodeFile, MAX_SECONDS, SAMPLE_RATE, startRecording, type Recorder } from '../transcribe/audio';
+import { decodeFile, MAX_FILE_SECONDS, MAX_SECONDS, SAMPLE_RATE, sliceSeconds, startRecording, type Recorder } from '../transcribe/audio';
 import { notesToSong, type DetectedNote } from '../transcribe/quantize';
 import {
   canEmbedYouTube,
@@ -43,6 +43,14 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
   const source = useRef<Float32Array | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const [working, setWorking] = useState('AI가 음을 찾고 있어요');
+  // 음원 파일: 고른 뒤 들어 보며 구간을 정한다
+  const [picked, setPicked] = useState<{ name: string; url: string; audio: Float32Array; seconds: number } | null>(null);
+  const [fileStart, setFileStart] = useState('0:00');
+  const [fileEnd, setFileEnd] = useState('0:30');
+  const audioEl = useRef<HTMLAudioElement>(null);
+  useEffect(() => () => (picked ? URL.revokeObjectURL(picked.url) : undefined), [picked]);
+
   // 유튜브
   const [url, setUrl] = useState('');
   const [videoId, setVideoId] = useState<string | null>(null);
@@ -65,6 +73,7 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
   );
 
   const run = async (audio: Float32Array, name: string) => {
+    setWorking('AI가 음을 찾고 있어요');
     setStage('working');
     setProgress(0);
     setError(null);
@@ -82,17 +91,39 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
     }
   };
 
+  /** 파일을 읽어 두고, 들어 보며 옮길 구간을 고르게 한다 */
   const onFile = async (file: File) => {
     setError(null);
+    setWorking('파일을 읽고 있어요');
+    setProgress(0);
     setStage('working');
     try {
-      const { audio, trimmed } = await decodeFile(file);
-      if (trimmed) setError(`앞 ${MAX_SECONDS / 60}분만 옮겨요.`);
-      await run(audio, file.name.replace(/\.[^.]+$/, ''));
+      const { audio, seconds, trimmed } = await decodeFile(file);
+      if (trimmed) setError(`앞 ${MAX_FILE_SECONDS / 60}분까지만 불러왔어요.`);
+      setPicked({ name: file.name.replace(/\.[^.]+$/, ''), url: URL.createObjectURL(file), audio, seconds });
+      setFileStart('0:00');
+      setFileEnd(formatTime(Math.min(seconds, MAX_SECONDS)));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setStage('source');
     }
+    setStage('source');
+  };
+
+  const transcribeFileRange = () => {
+    if (!picked) return;
+    const s = parseTime(fileStart);
+    const e = parseTime(fileEnd);
+    if (s === null || e === null || e <= s || s >= picked.seconds) {
+      setError('시작과 끝 시간을 확인해 주세요 (예: 1:05).');
+      return;
+    }
+    if (e - s > MAX_SECONDS + 0.5) {
+      setError(`한 번에 ${MAX_SECONDS / 60}분까지 옮길 수 있어요.`);
+      return;
+    }
+    audioEl.current?.pause();
+    setError(null);
+    void run(sliceSeconds(picked.audio, s, Math.min(e, picked.seconds)), picked.name);
   };
 
   const loadVideo = async () => {
@@ -151,7 +182,9 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
       p.playVideo();
       recorder.current = await rec;
     } catch {
-      setError('마이크를 켜지 못했어요. 마이크 권한을 허용해 주세요.');
+      setError(
+        '마이크를 켜지 못했어요. Safari 주소창의 "가가" → 웹 사이트 설정 → 마이크 → 허용으로 바꾸거나, 아래 "마이크 없이 하기"를 써 보세요.',
+      );
       p.pauseVideo();
       return;
     }
@@ -217,21 +250,80 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
 
         {error && <p className="error">{error}</p>}
 
-        {stage === 'source' && tab === 'file' && (
+        {stage === 'source' && tab === 'file' && !picked && (
           <div className="pane">
             <p className="muted">
-              피아노 연주 음원(mp3, m4a, wav)을 고르세요. 피아노만 나오는 음원일수록 정확해요. 최대 {MAX_SECONDS / 60}분.
+              피아노 연주 음원(mp3, m4a, wav)이나 동영상(아이패드 화면 기록 등)을 고르세요. 피아노만 나오는 음원일수록
+              정확해요. 고른 뒤 옮길 구간(최대 {MAX_SECONDS / 60}분)을 정할 수 있어요.
             </p>
             <label className="drop">
               <input type="file" accept="audio/*,video/*" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
               <span className="drop-icon">♫</span>
-              <b>음원 파일 고르기</b>
+              <b>음원·영상 파일 고르기</b>
             </label>
+          </div>
+        )}
+
+        {stage === 'source' && tab === 'file' && picked && (
+          <div className="pane">
+            <p className="file-name">
+              <b>{picked.name}</b> <span className="muted">· {formatTime(picked.seconds)}</span>
+            </p>
+            <audio ref={audioEl} src={picked.url} controls preload="metadata" className="preview" />
+            <div className="field-row times">
+              <label>
+                시작
+                <input value={fileStart} onChange={(e) => setFileStart(e.target.value)} />
+                <button className="btn ghost small" onClick={() => setFileStart(formatTime(audioEl.current?.currentTime ?? 0))}>
+                  지금 위치
+                </button>
+              </label>
+              <label>
+                끝
+                <input value={fileEnd} onChange={(e) => setFileEnd(e.target.value)} />
+                <button className="btn ghost small" onClick={() => setFileEnd(formatTime(audioEl.current?.currentTime ?? 0))}>
+                  지금 위치
+                </button>
+              </label>
+            </div>
+            <p className="muted small">재생하면서 원하는 곳에서 "지금 위치"를 누르면 편해요. 한 번에 최대 {MAX_SECONDS / 60}분.</p>
+            <div className="actions">
+              <button
+                className="btn"
+                onClick={() => {
+                  setPicked(null);
+                  setError(null);
+                }}
+              >
+                다른 파일
+              </button>
+              <button className="btn primary" onClick={transcribeFileRange}>
+                이 구간으로 악보 만들기
+              </button>
+            </div>
           </div>
         )}
 
         {tab === 'youtube' && (stage === 'source' || stage === 'recording') && (
           <div className="pane">
+            {stage === 'source' && (
+              <details className="tip">
+                <summary>마이크 없이 하기 (아이패드 화면 기록)</summary>
+                <p>
+                  유튜브 소리는 보안상 앱이 직접 읽을 수 없어서, 여기서는 스피커 소리를 마이크로 받아요. 마이크 없이 깨끗한
+                  소리로 하려면:
+                </p>
+                <ol>
+                  <li>제어 센터에서 화면 기록(⏺)을 켜고 유튜브에서 원하는 구간을 재생한 뒤 멈춰요.</li>
+                  <li>
+                    여기서 <b>음원 파일</b> 탭 → 사진 앱에 저장된 기록 영상을 고르고, 옮길 구간을 정해요.
+                  </li>
+                </ol>
+                <button className="btn small" onClick={() => setTab('file')}>
+                  음원 파일 탭으로
+                </button>
+              </details>
+            )}
             {!canEmbedYouTube() ? (
               <>
                 <p className="muted">
@@ -315,7 +407,9 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
 
         {stage === 'working' && (
           <div className="pane working">
-            <p>AI가 음을 찾고 있어요… {Math.round(progress * 100)}%</p>
+            <p>
+              {working}… {working.startsWith('AI') && `${Math.round(progress * 100)}%`}
+            </p>
             <div className="progress">
               <div style={{ width: `${Math.round(progress * 100)}%` }} />
             </div>

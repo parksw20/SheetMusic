@@ -5,6 +5,8 @@ import { acquireMicStream, releaseMicStream } from '../input/mic';
 export const SAMPLE_RATE = 22050;
 /** 한 번에 옮길 수 있는 최대 길이 (초). 길면 iPad에서 오래 걸리고 메모리를 많이 쓴다 */
 export const MAX_SECONDS = 300;
+/** 불러올 수 있는 음원 파일 길이 (초). 이 안에서 옮길 구간(최대 MAX_SECONDS)을 고른다 */
+export const MAX_FILE_SECONDS = 1200;
 
 /** 모노 소리를 22,050Hz로 바꾼다 (브라우저 내장 리샘플러) */
 async function toMono22k(buffer: AudioBuffer, maxSeconds = MAX_SECONDS): Promise<Float32Array> {
@@ -28,8 +30,13 @@ export async function decodeFile(file: File): Promise<{ audio: Float32Array; sec
   } catch {
     throw new Error('이 파일은 읽을 수 없어요. mp3, m4a, wav 파일을 써 보세요.');
   }
-  const audio = await toMono22k(buffer);
-  return { audio, seconds: audio.length / SAMPLE_RATE, trimmed: buffer.duration > MAX_SECONDS };
+  const audio = await toMono22k(buffer, MAX_FILE_SECONDS);
+  return { audio, seconds: audio.length / SAMPLE_RATE, trimmed: buffer.duration > MAX_FILE_SECONDS };
+}
+
+/** start~end초 구간만 잘라 낸다 (22,050Hz) */
+export function sliceSeconds(audio: Float32Array, start: number, end: number): Float32Array {
+  return audio.slice(Math.max(0, Math.floor(start * SAMPLE_RATE)), Math.min(audio.length, Math.ceil(end * SAMPLE_RATE)));
 }
 
 export interface Recorder {
