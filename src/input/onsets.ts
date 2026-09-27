@@ -140,6 +140,12 @@ const RECENT_HIT_MS = 500;
  */
 export const VOICE_WOBBLE = 0.6;
 
+/**
+ * 틀림 후보가 피아노 소리인지 원래 소리로 확인한다 (steadiness.ts).
+ * true 피아노, false 목소리 등 음높이가 흔들리는 소리, null 음 시작 뒤 소리가 아직 덜 모임(다음 묶음에 다시 본다).
+ */
+export type SteadyCheck = (onset: NoteOnset) => boolean | null;
+
 export class OnsetJudge {
   private hitTimes: number[] = [];
   private lastHit = -Infinity;
@@ -153,6 +159,8 @@ export class OnsetJudge {
   constructor(
     /** 기대하지 않은 음을 틀림으로 볼 최소 세기 (약한 잡음을 틀림으로 세지 않게) */
     private wrongThreshold: number,
+    /** 있으면 음높이 흔들림(wobble) 대신 이것으로 목소리를 거른다 */
+    private steadyCheck?: SteadyCheck,
   ) {}
 
   setWrongThreshold(v: number) {
@@ -195,10 +203,18 @@ export class OnsetJudge {
     for (const onset of ready) {
       if (getExpected().length === 0) continue;
       if (onset.confidence < this.wrongThreshold) continue;
-      if ((onset.wobble ?? 0) >= VOICE_WOBBLE) continue;
+      if (!this.steadyCheck && (onset.wobble ?? 0) >= VOICE_WOBBLE) continue;
       if (this.hitTimes.some((t) => Math.abs(onset.time - t) < CHORD_WINDOW_MS)) continue;
       const recent = this.recentHits.get(onset.midi);
       if (recent !== undefined && onset.time - recent < RECENT_HIT_MS) continue;
+      if (this.steadyCheck) {
+        const steady = this.steadyCheck(onset);
+        if (steady === null) {
+          this.pending.push(onset);
+          continue;
+        }
+        if (!steady) continue;
+      }
       emit(onset.midi, 'wrong', onset);
     }
   }

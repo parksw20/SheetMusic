@@ -3,6 +3,7 @@ import { preloadAi, type AiTranscriber } from './aiClient';
 import { BASIC_PITCH_SAMPLE_RATE } from './basicPitch';
 import { LEVEL_BLOCK_MS, LevelGate, NoteTracker, OnsetJudge, withFastNotes } from './onsets';
 import { NoteVerifier, type Sensitivity } from './pitch';
+import { isSteady, measureSteadiness, samplesNeeded } from './steadiness';
 import { resampleTail } from './resample';
 import type { NoteListener } from './types';
 
@@ -260,7 +261,16 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
 
   // ── AI 방식 (Spotify 공식 basic-pitch-ts) ──
   let thresholds = AI_THRESHOLDS[opts.sensitivity];
-  const judge = new OnsetJudge(thresholds.wrong);
+  // 틀림 후보는 원래 소리에서 음높이가 피아노처럼 고정돼 있는지 확인한다 (말소리·노래 거르기)
+  const steadySpan = samplesNeeded(sr);
+  const judge = new OnsetJudge(thresholds.wrong, (onset) => {
+    const from = Math.round((onset.time / 1000) * sr);
+    if (from + steadySpan > written) return null;
+    // 너무 오래돼 이미 지워진 소리는 확인할 수 없어 피아노로 본다
+    if (written - from > ring.length) return true;
+    const s = measureSteadiness(recent(written - from).subarray(0, steadySpan), sr, onset.midi);
+    return s ? isSteady(s) : true;
+  });
   let tracker: NoteTracker | null = null;
   let transcriber: AiTranscriber | null = null;
   let stopped = false;
