@@ -21,6 +21,216 @@
     "levelName": "입문"
   },
   {
+    "file": "etude-rh-steps.musicxml",
+    "title": "연습곡: 오른손 계단",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-down-steps.musicxml",
+    "title": "연습곡: 내려가는 계단",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-lh-steps.musicxml",
+    "title": "연습곡: 왼손 계단",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-thirds.musicxml",
+    "title": "연습곡: 한 칸 건너뛰기",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-echo.musicxml",
+    "title": "연습곡: 메아리 (양손 번갈아)",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-rests.musicxml",
+    "title": "연습곡: 쉼표 놀이",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-long-notes.musicxml",
+    "title": "연습곡: 긴 음 세기",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-march.musicxml",
+    "title": "연습곡: 작은 행진곡",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-waltz.musicxml",
+    "title": "연습곡: 첫 왈츠 (3/4박자)",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-eighths.musicxml",
+    "title": "연습곡: 8분음표 산책",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-g-position.musicxml",
+    "title": "연습곡: 솔 자리 노래",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-black-key.musicxml",
+    "title": "연습곡: 첫 검은 건반 (파#)",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-hands-together.musicxml",
+    "title": "연습곡: 양손 함께 (도와 솔)",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "etude-lh-accompany.musicxml",
+    "title": "연습곡: 왼손 반주 (도-솔)",
+    "composer": "SheetMusic 연습곡",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "hot-cross-buns.musicxml",
+    "title": "핫 크로스 번 (Hot Cross Buns)",
+    "composer": "영국 전래동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "alle-meine-entchen.musicxml",
+    "title": "모든 오리들 (Alle meine Entchen)",
+    "composer": "독일 민요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "aunt-rhody.musicxml",
+    "title": "로디 아줌마 (Go Tell Aunt Rhody)",
+    "composer": "미국 민요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "au-clair-de-la-lune.musicxml",
+    "title": "달빛 아래서 (Au clair de la lune)",
+    "composer": "프랑스 민요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "london-bridge.musicxml",
+    "title": "런던 다리 (London Bridge)",
+    "composer": "영국 전래동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "frere-jacques.musicxml",
+    "title": "프레르 자크 (Frère Jacques)",
+    "composer": "프랑스 민요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "old-macdonald.musicxml",
+    "title": "맥도날드 할아버지 (Old MacDonald)",
+    "composer": "미국 동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "yankee-doodle.musicxml",
+    "title": "양키 두들 (Yankee Doodle)",
+    "composer": "미국 민요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "this-old-man.musicxml",
+    "title": "이 할아버지 (This Old Man)",
+    "composer": "영국 동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "augustin.musicxml",
+    "title": "오 사랑스런 아우구스틴 (O du lieber Augustin)",
+    "composer": "오스트리아 민요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "row-your-boat.musicxml",
+    "title": "노를 저어라 (Row, Row, Row Your Boat)",
+    "composer": "미국 동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "three-blind-mice.musicxml",
+    "title": "세 마리 눈먼 쥐 (Three Blind Mice)",
+    "composer": "영국 동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "itsy-bitsy-spider.musicxml",
+    "title": "거미가 줄을 타고 (Itsy Bitsy Spider)",
+    "composer": "미국 동요",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "oh-susanna.musicxml",
+    "title": "오 수재너 (Oh! Susanna)",
+    "composer": "S. Foster",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "jingle-bells-verse.musicxml",
+    "title": "징글벨 (1절)",
+    "composer": "J. Pierpont",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
+    "file": "when-the-saints.musicxml",
+    "title": "성자의 행진 (When the Saints Go Marching In)",
+    "composer": "미국 흑인영가",
+    "level": 1,
+    "levelName": "입문"
+  },
+  {
     "file": "twinkle.musicxml",
     "title": "작은 별 (Twinkle Twinkle Little Star)",
     "composer": "프랑스 민요",
@@ -42,9 +252,149 @@
     "levelName": "초급"
   },
   {
+    "file": "largo-new-world.musicxml",
+    "title": "라르고 (신세계 교향곡 2악장)",
+    "composer": "A. Dvořák",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "clementine.musicxml",
+    "title": "클레멘타인 (Oh My Darling, Clementine)",
+    "composer": "미국 민요",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "brahms-lullaby.musicxml",
+    "title": "브람스의 자장가 (Wiegenlied)",
+    "composer": "J. Brahms",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "amazing-grace.musicxml",
+    "title": "놀라운 은혜 (Amazing Grace)",
+    "composer": "미국 찬송가 선율",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "sakura.musicxml",
+    "title": "벚꽃 (Sakura Sakura)",
+    "composer": "일본 민요",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "auld-lang-syne.musicxml",
+    "title": "석별의 정 (Auld Lang Syne)",
+    "composer": "스코틀랜드 민요",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "silent-night.musicxml",
+    "title": "고요한 밤 거룩한 밤 (Silent Night)",
+    "composer": "F. X. Gruber",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "joy-to-the-world.musicxml",
+    "title": "기쁘다 구주 오셨네 (Joy to the World)",
+    "composer": "L. Mason 편곡 (G. F. Handel 풍)",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "deck-the-halls.musicxml",
+    "title": "덱 더 홀스 (Deck the Halls)",
+    "composer": "웨일스 민요",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
+    "file": "we-wish-you.musicxml",
+    "title": "우리 모두 메리 크리스마스 (We Wish You a Merry Christmas)",
+    "composer": "영국 캐럴",
+    "level": 2,
+    "levelName": "초급"
+  },
+  {
     "file": "minuet-in-g.musicxml",
     "title": "미뉴에트 G장조 (Minuet in G, 쉬운 편곡)",
     "composer": "C. Petzold",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "ode-to-joy-full.musicxml",
+    "title": "환희의 송가 (전곡, 양손)",
+    "composer": "L. v. Beethoven",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "korobeiniki.musicxml",
+    "title": "코로베이니키 (Korobeiniki)",
+    "composer": "러시아 민요",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "carol-of-the-bells.musicxml",
+    "title": "종소리 캐럴 (Shchedryk, Carol of the Bells)",
+    "composer": "M. Leontovych",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "greensleeves.musicxml",
+    "title": "그린슬리브스 (Greensleeves)",
+    "composer": "영국 민요",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "symphony-40.musicxml",
+    "title": "교향곡 40번 1악장 주제",
+    "composer": "W. A. Mozart",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "mountain-king.musicxml",
+    "title": "산왕의 궁전에서 (In the Hall of the Mountain King)",
+    "composer": "E. Grieg",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "canon-in-d.musicxml",
+    "title": "캐논 (Canon in D, 쉬운 편곡)",
+    "composer": "J. Pachelbel",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "fur-elise.musicxml",
+    "title": "엘리제를 위하여 (Für Elise, 첫 부분)",
+    "composer": "L. v. Beethoven",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "prelude-in-c.musicxml",
+    "title": "프렐류드 C장조 (평균율 1권 1번, 쉬운 편곡)",
+    "composer": "J. S. Bach",
+    "level": 3,
+    "levelName": "중급"
+  },
+  {
+    "file": "moonlight-sonata.musicxml",
+    "title": "월광 소나타 1악장 (도입부)",
+    "composer": "L. v. Beethoven",
     "level": 3,
     "levelName": "중급"
   }

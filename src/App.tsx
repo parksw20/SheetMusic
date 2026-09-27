@@ -1,112 +1,91 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ensureAudio, noteOff, noteOn, playNotes } from './audio/synth';
-import { ResultPanel } from './components/ResultPanel';
-import { ScoreView } from './components/ScoreView';
-import {
-  createPractice,
-  currentStep,
-  isFinished,
-  pressKey,
-  summarize,
-  type PracticeState,
-} from './engine/practice';
+import { HomeScreen } from './components/HomeScreen';
+import { Logo } from './components/Logo';
+import { PlayScreen, type InputBridge } from './components/PlayScreen';
+import { SettingsPanel } from './components/SettingsPanel';
+import { TranscribeDialog } from './components/TranscribeDialog';
 import { listenComputerKeyboard } from './input/computerKeyboard';
 import { isMicSupported, MODEL_URL, startMic, type MicDiagnostics, type MicSession, type MicStatus } from './input/mic';
 import { connectMidi, isMidiSupported, type MidiConnection } from './input/midi';
-import type { Sensitivity } from './input/pitch';
 import type { NoteInput } from './input/types';
-import {
-  buildSteps,
-  filterByHand,
-  midiToName,
-  midiToSolfege,
-  type HandFilter,
-  type Score,
-} from './score/model';
+import type { Score } from './score/model';
 import { parseMusicXml } from './score/parseMusicXml';
+import { fetchBuiltinSongs, loadSongXml, MY_LEVEL, MY_LEVEL_NAME, mySongEntries, splitTitle, type SongEntry } from './songs';
+import {
+  loadBestStars,
+  loadLevel,
+  loadMySongs,
+  loadSettings,
+  saveBestStars,
+  saveLevel,
+  saveMySongs,
+  saveSettings,
+  type MySong,
+  type Settings,
+} from './storage';
+import { YOUTUBE_MODE_HASH } from './transcribe/youtube';
 import { CURRENT, fetchDeployed, reloadTo, versionLabel, type VersionInfo } from './version';
-import { loadBestStars, loadSensitivity, saveBestStars, saveSensitivity } from './storage';
 
-interface SongInfo {
-  file: string;
-  title: string;
-  composer: string;
-  /** 1 입문, 2 초급, 3 중급 */
-  level: number;
-  levelName: string;
-}
+type MicState = 'off' | 'starting' | 'error' | MicStatus;
 
-type Mode = 'idle' | 'practice' | 'demo';
-
-const HANDS: { value: HandFilter; label: string }[] = [
-  { value: 'both', label: '양손' },
-  { value: 'right', label: '오른손' },
-  { value: 'left', label: '왼손' },
-];
-
-const MIC_LABELS: Record<MicStatus, string> = {
-  loading: '🎤 AI 준비 중…',
-  warming: '🎤 듣는 중…',
-  ai: '🎤 AI 인식 중',
-  basic: '🎤 듣는 중 (기본)',
+const MIC_TEXT: Record<MicState, string> = {
+  off: '마이크 켜기',
+  starting: '마이크 켜는 중',
+  error: '마이크 다시 켜기',
+  loading: 'AI 준비 중',
+  warming: '듣는 중',
+  ai: '듣는 중',
+  basic: '듣는 중 (기본)',
 };
 
-const SENSITIVITIES: { value: Sensitivity; label: string }[] = [
-  { value: 'low', label: '낮음' },
-  { value: 'normal', label: '보통' },
-  { value: 'high', label: '높음' },
-];
-
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+    </svg>
+  );
+}
 
 export default function App() {
-  const [songs, setSongs] = useState<SongInfo[]>([]);
-  const [songKey, setSongKey] = useState<string>('');
-  const [level, setLevel] = useState(1);
-  const [xml, setXml] = useState<string | null>(null);
-  const [score, setScore] = useState<Score | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const [hand, setHand] = useState<HandFilter>('both');
-  const [tempo, setTempo] = useState(100); // %
-  const [mode, setMode] = useState<Mode>('idle');
-  const [practice, setPractice] = useState<PracticeState | null>(null);
-  const [resetKey, setResetKey] = useState(0);
-  const [demoBeat, setDemoBeat] = useState(0);
-  const [showResult, setShowResult] = useState(false);
+  const [builtin, setBuiltin] = useState<SongEntry[]>([]);
+  const [mySongs, setMySongs] = useState<MySong[]>(loadMySongs);
+  const [level, setLevel] = useState<number>(() => loadLevel() ?? 1);
+  const [listError, setListError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  /** 유튜브 모드(?nocoi)로 열렸으면 바로 악보 만들기 창을 연다 */
+  const youtubeMode = location.hash === YOUTUBE_MODE_HASH;
+  const [showTranscribe, setShowTranscribe] = useState(youtubeMode);
   const [bestStars, setBestStars] = useState<Record<string, number>>(loadBestStars);
 
-  const [wrong, setWrong] = useState<number | null>(null);
-  const [showHint, setShowHint] = useState(true);
+  const [song, setSong] = useState<SongEntry | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; xml: string; score: Score } | null>(null);
+  const [songError, setSongError] = useState<string | null>(null);
+
+  const [micState, setMicState] = useState<MicState>('off');
+  const [micError, setMicError] = useState<string | null>(null);
+  const [diag, setDiag] = useState<MicDiagnostics | null>(null);
+  const [inference, setInference] = useState<{ ms: number; backend: string } | null>(null);
+  const [heard, setHeard] = useState<number | null>(null);
+  const micRef = useRef<MicSession | null>(null);
+  const micLevelRef = useRef<HTMLSpanElement>(null);
+  const heardTimer = useRef<number | undefined>(undefined);
+
   const [midiDevices, setMidiDevices] = useState<string[] | null>(null);
   const [midiError, setMidiError] = useState<string | null>(null);
-  const [soundForMidi, setSoundForMidi] = useState(false);
-  const [micOn, setMicOn] = useState(false);
-  const [micStatus, setMicStatus] = useState<MicStatus>('loading');
-  const [heard, setHeard] = useState<number | null>(null);
-  const [inference, setInference] = useState<{ ms: number; backend: string } | null>(null);
-  const [diag, setDiag] = useState<MicDiagnostics | null>(null);
-  const [deployed, setDeployed] = useState<VersionInfo | null>(null);
-  const [aiPreload, setAiPreload] = useState<'loading' | 'ready' | 'failed'>('loading');
-  const heardTimer = useRef<number | undefined>(undefined);
-  const [micError, setMicError] = useState<string | null>(null);
-  const [sensitivity, setSensitivity] = useState<Sensitivity>(loadSensitivity);
-
-  const practiceRef = useRef(practice);
-  practiceRef.current = practice;
-  const stopDemoRef = useRef<(() => void) | null>(null);
   const midiRef = useRef<MidiConnection | null>(null);
-  const wrongTimer = useRef<number | undefined>(undefined);
   const keyboardBase = useRef(60);
-  const micRef = useRef<MicSession | null>(null);
-  const micLevelRef = useRef<HTMLDivElement>(null);
+  const [deployed, setDeployed] = useState<VersionInfo | null>(null);
+
+  /** 연습 화면이 등록하는 입력 통로 (마이크·MIDI·키보드 → 연습) */
+  const bridge = useRef<InputBridge | null>(null);
+  const sendNote = useCallback((e: NoteInput) => bridge.current?.onNote(e), []);
 
   // AI 인식기를 앱을 열 때 미리 불러 둔다 (마이크를 켤 때 기다리지 않게)
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      import('./input/aiClient')
-        .then((m) => m.preloadAi(MODEL_URL))
-        .then(() => setAiPreload('ready'))
-        .catch(() => setAiPreload('failed'));
+      void import('./input/aiClient').then((m) => m.preloadAi(MODEL_URL)).catch(() => undefined);
     }, 1000);
     return () => window.clearTimeout(timer);
   }, []);
@@ -125,418 +104,280 @@ export default function App() {
     };
   }, []);
 
-  // 곡 목록
   useEffect(() => {
-    fetch(`${import.meta.env.BASE_URL}songs/index.json`)
-      .then((r) => r.json())
-      .then((list: SongInfo[]) => {
-        setSongs(list);
-        const first = list.find((s) => s.level === 1) ?? list[0];
-        if (first) {
-          setLevel(first.level);
-          setSongKey(first.file);
-        }
-      })
-      .catch(() => setLoadError('곡 목록을 불러오지 못했습니다.'));
+    fetchBuiltinSongs()
+      .then(setBuiltin)
+      .catch(() => setListError('곡 목록을 불러오지 못했습니다.'));
   }, []);
 
-  // 곡 불러오기 (내장 곡)
-  useEffect(() => {
-    if (!songKey || songKey.startsWith('upload:')) return;
-    fetch(`${import.meta.env.BASE_URL}songs/${songKey}`)
-      .then((r) => r.text())
-      .then(loadXml)
-      .catch(() => setLoadError('악보를 불러오지 못했습니다.'));
-  }, [songKey]);
-
-  function loadXml(text: string) {
-    try {
-      setScore(parseMusicXml(text));
-      setXml(text);
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  const levels = useMemo(
-    () => [...new Map(songs.map((s) => [s.level, s.levelName])).entries()].sort(([a], [b]) => a - b),
-    [songs],
-  );
-  const levelSongs = songs.filter((s) => s.level === level);
+  const allSongs = useMemo(() => [...builtin, ...mySongEntries(mySongs)], [builtin, mySongs]);
+  const levels = useMemo(() => {
+    const map = new Map(builtin.map((s) => [s.level, s.levelName]));
+    if (mySongs.length) map.set(MY_LEVEL, MY_LEVEL_NAME);
+    return [...map.entries()].sort(([a], [b]) => (a || 99) - (b || 99));
+  }, [builtin, mySongs]);
+  const levelSongs = allSongs.filter((s) => s.level === level);
 
   const changeLevel = (next: number) => {
     setLevel(next);
-    const first = songs.find((s) => s.level === next);
-    if (first) setSongKey(first.file);
+    saveLevel(next);
   };
 
-  const notes = useMemo(() => (score ? filterByHand(score.notes, hand) : []), [score, hand]);
-  const steps = useMemo(() => buildSteps(notes), [notes]);
+  const changeSettings = (next: Settings) => {
+    setSettings(next);
+    saveSettings(next);
+    micRef.current?.setSensitivity(next.sensitivity);
+  };
 
-  const stopAll = useCallback(() => {
-    stopDemoRef.current?.();
-    stopDemoRef.current = null;
-    setMode('idle');
-    setPractice(null);
-    setDemoBeat(0);
-    setResetKey((k) => k + 1);
+  // ── 마이크: 곡에 들어가면 켜고, 나오면 끈다 ──
+  const stopMic = useCallback(() => {
+    micRef.current?.stop();
+    micRef.current = null;
+    setMicState('off');
+    setDiag(null);
   }, []);
 
-  // 곡이나 손을 바꾸면 진행 중인 연습/재생을 멈춘다
-  useEffect(stopAll, [steps, stopAll]);
+  /** 사용자가 누른 순간(클릭 처리 안)에 불러야 iPad에서 소리를 받을 수 있다 */
+  const startMicSession = () => {
+    if (!isMicSupported() || micRef.current) return;
+    setMicState('starting');
+    setMicError(null);
+    startMic({
+      listener: sendNote,
+      getExpected: () => bridge.current?.getExpected() ?? [],
+      onLevel: (v) => {
+        if (micLevelRef.current) micLevelRef.current.style.transform = `scaleX(${v.toFixed(3)})`;
+      },
+      onStatus: setMicState,
+      onInferenceMs: (ms, backend) => setInference({ ms, backend }),
+      onDiagnostics: setDiag,
+      onHeard: (midi) => {
+        setHeard(midi);
+        window.clearTimeout(heardTimer.current);
+        heardTimer.current = window.setTimeout(() => setHeard(null), 1500);
+      },
+      sensitivity: settings.sensitivity,
+    })
+      .then((session) => {
+        micRef.current = session;
+      })
+      .catch(() => {
+        setMicState('error');
+        setMicError(
+          window.isSecureContext
+            ? '마이크 권한이 없어요. iPad 설정에서 이 사이트의 마이크를 허용해 주세요.'
+            : '마이크는 HTTPS 주소에서만 쓸 수 있어요.',
+        );
+      });
+  };
+  useEffect(() => () => micRef.current?.stop(), []);
 
-  const startPractice = async () => {
-    await ensureAudio();
-    stopDemoRef.current?.();
-    stopDemoRef.current = null;
-    setShowResult(false);
-    setPractice(createPractice(steps));
-    setResetKey((k) => k + 1);
-    setMode('practice');
+  const openSong = (s: SongEntry) => {
+    startMicSession();
+    setSong(s);
+    setSongError(null);
+    loadSongXml(s)
+      .then((xml) => setLoaded({ key: s.key, xml, score: parseMusicXml(xml) }))
+      .catch((e: unknown) => setSongError(e instanceof Error ? e.message : String(e)));
   };
 
-  const startDemo = async () => {
-    if (!score) return;
-    await ensureAudio();
-    stopAll();
-    setMode('demo');
-    stopDemoRef.current = playNotes(notes, (score.bpm * tempo) / 100, setDemoBeat, () => {
-      stopDemoRef.current = null;
-      setMode('idle');
-      setDemoBeat(0);
-    });
+  const goHome = () => {
+    stopMic();
+    setSong(null);
+    setLoaded(null);
   };
 
-  const handleNote = useCallback(
-    (e: NoteInput) => {
-      // 마이크 입력은 이미 피아노 소리가 나고, 다시 재생하면 마이크로 되돌아 들어간다
-      if (e.source === 'keyboard' || (e.source === 'midi' && soundForMidi)) {
-        if (e.type === 'on') void ensureAudio().then(() => noteOn(e.midi, e.velocity));
-        else noteOff(e.midi);
-      }
-      if (e.type !== 'on') return;
-
-      const current = practiceRef.current;
-      if (!current) return;
-      const { state, result } = pressKey(current, e.midi, performance.now());
-      practiceRef.current = state;
-      setPractice(state);
-      if (result === 'wrong') {
-        setWrong(e.midi);
-        window.clearTimeout(wrongTimer.current);
-        wrongTimer.current = window.setTimeout(() => setWrong(null), 500);
-      }
-      if (isFinished(state) && !isFinished(current)) setShowResult(true);
-    },
-    [soundForMidi],
-  );
-
-  // 결과 저장
-  useEffect(() => {
-    if (!practice || !isFinished(practice) || !songKey) return;
-    const key = `${songKey}#${hand}`;
-    const stars = summarize(practice).stars;
+  const onFinished = (stars: number) => {
+    if (!song) return;
+    const key = `${song.key}#${settings.hand}`;
     setBestStars((prev) => {
       if ((prev[key] ?? -1) >= stars) return prev;
       const next = { ...prev, [key]: stars };
       saveBestStars(next);
       return next;
     });
-  }, [practice, songKey, hand]);
+  };
 
   // 컴퓨터(외장) 키보드
   useEffect(
     () =>
       listenComputerKeyboard(
-        handleNote,
+        sendNote,
         () => keyboardBase.current,
         (d) => (keyboardBase.current = Math.min(96, Math.max(24, keyboardBase.current + d))),
       ),
-    [handleNote],
+    [sendNote],
   );
-
-  // MIDI 연결 해제
   useEffect(() => () => midiRef.current?.disconnect(), []);
-  const handleNoteRef = useRef(handleNote);
-  handleNoteRef.current = handleNote;
-
   const connectMidiDevice = async () => {
     try {
       midiRef.current?.disconnect();
-      midiRef.current = await connectMidi((e) => handleNoteRef.current(e), setMidiDevices);
+      midiRef.current = await connectMidi(sendNote, setMidiDevices);
       setMidiError(null);
     } catch {
       setMidiError('MIDI 권한이 거부되었거나 사용할 수 없습니다.');
     }
   };
 
-  // 마이크: 연습 중일 때만 아직 안 친 기대 음을 넘긴다
-  const toggleMic = async () => {
-    if (micRef.current) {
-      micRef.current.stop();
-      micRef.current = null;
-      setMicOn(false);
-      return;
-    }
-    try {
-      micRef.current = await startMic({
-        listener: (e) => handleNoteRef.current(e),
-        getExpected: () => {
-          const p = practiceRef.current;
-          const s = p && !isFinished(p) ? currentStep(p) : undefined;
-          return s ? s.notes.map((n) => n.midi).filter((m) => !p!.hit.includes(m)) : [];
-        },
-        onLevel: (level) => {
-          if (micLevelRef.current) micLevelRef.current.style.width = `${Math.round(level * 100)}%`;
-        },
-        onStatus: setMicStatus,
-        onInferenceMs: (ms, backend) => setInference({ ms, backend }),
-        onDiagnostics: setDiag,
-        onHeard: (midi) => {
-          setHeard(midi);
-          window.clearTimeout(heardTimer.current);
-          heardTimer.current = window.setTimeout(() => setHeard(null), 1500);
-        },
-        sensitivity,
-      });
-      setMicOn(true);
-      setMicError(null);
-    } catch {
-      setMicError(
-        window.isSecureContext
-          ? '마이크 권한이 거부되었습니다. 설정에서 마이크를 허용해 주세요.'
-          : '마이크는 HTTPS 주소에서만 쓸 수 있어요. (npm run dev:ipad 참고)',
-      );
-    }
+  const addMySong = (title: string, xml: string): boolean => {
+    const entry: MySong = { id: Date.now().toString(36), title, createdAt: Date.now(), xml };
+    const next = [entry, ...mySongs];
+    if (!saveMySongs(next)) return false;
+    setMySongs(next);
+    return true;
   };
-  useEffect(() => () => micRef.current?.stop(), []);
-
-  const changeSensitivity = (s: Sensitivity) => {
-    setSensitivity(s);
-    saveSensitivity(s);
-    micRef.current?.setSensitivity(s);
+  const deleteMySong = (id: string) => {
+    const next = mySongs.filter((s) => s.id !== id);
+    saveMySongs(next);
+    setMySongs(next);
+    if (!next.length && level === MY_LEVEL) changeLevel(1);
   };
 
-  const onUpload = async (file: File) => {
-    stopAll();
-    setSongKey(`upload:${file.name}`);
-    loadXml(await file.text());
-  };
+  const diagnostics =
+    settings.showDiagnostics && diag
+      ? `오디오 ${diag.audio === 'running' ? '정상' : diag.audio} · ${Math.round(diag.sampleRate / 1000)}kHz · 수집 ${diag.capture} ${Math.round(diag.samplesPerSec / 1000)}k/초 · 입력 ${Math.round(diag.levelDb)}dB · ${inference ? `AI ${inference.backend} ${Math.round(inference.ms)}ms` : 'AI 준비 중'} · 최근 인식 ${diag.lastNotes}음`
+      : null;
 
-  const step = practice ? currentStep(practice) : undefined;
-  const cursorBeat =
-    mode === 'practice' ? (step?.startBeat ?? score?.totalBeats ?? 0) : mode === 'demo' ? demoBeat : 0;
-  const progress = practice && steps.length ? Math.round((practice.index / steps.length) * 100) : 0;
-  const practicing = mode === 'practice';
+  const title = song ? splitTitle(song.title) : null;
+  const listening = micState === 'ai' || micState === 'warming' || micState === 'basic';
 
   return (
     <div className="app">
       {deployed && (
         <div className="update" role="status">
-          새 버전이 있습니다 ({versionLabel(deployed)})
-          <button className="primary" onClick={() => reloadTo(deployed)}>
+          새 버전이 있어요 ({versionLabel(deployed)})
+          <button className="btn primary small" onClick={() => reloadTo(deployed)}>
             새로고침
           </button>
         </div>
       )}
-      {!practicing && (
-        <header className="toolbar">
-          <select
-            className="level"
-            value={level}
-            onChange={(e) => changeLevel(Number(e.target.value))}
-            aria-label="난이도"
-          >
-            {levels.map(([value, name]) => (
-              <option key={value} value={value}>
-                {name}
-              </option>
-            ))}
-          </select>
 
-          <select className="song" value={songKey} onChange={(e) => setSongKey(e.target.value)} aria-label="곡">
-            {levelSongs.map((s) => {
-              const stars = bestStars[`${s.file}#both`];
-              return (
-                <option key={s.file} value={s.file}>
-                  {s.title}
-                  {stars !== undefined ? ` ${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}` : ''}
-                </option>
-              );
-            })}
-            {songKey.startsWith('upload:') && <option value={songKey}>{songKey.slice(7)}</option>}
-          </select>
-
-          <label className="button">
-            악보 열기
-            <input
-              type="file"
-              accept=".musicxml,.xml"
-              onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
-            />
-          </label>
-
-          <div className="segmented" role="group" aria-label="연습할 손">
-            {HANDS.map((h) => (
-              <button key={h.value} className={hand === h.value ? 'active' : ''} onClick={() => setHand(h.value)}>
-                {h.label}
-              </button>
-            ))}
-          </div>
-
-          <label className="tempo">
-            템포 {tempo}%
-            <input
-              type="range"
-              min={40}
-              max={150}
-              step={10}
-              value={tempo}
-              onChange={(e) => setTempo(Number(e.target.value))}
-            />
-          </label>
-
-          <label className="check">
-            <input type="checkbox" checked={showHint} onChange={(e) => setShowHint(e.target.checked)} />
-            다음 음 표시
-          </label>
-
-          <span className="midi">
-            {midiDevices ? (
-              <>
-                {midiDevices.length ? `🎛 ${midiDevices.join(', ')}` : '🎛 연결된 MIDI 장치 없음'}
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={soundForMidi}
-                    onChange={(e) => setSoundForMidi(e.target.checked)}
-                  />
-                  입력음 재생
-                </label>
-              </>
-            ) : (
-              isMidiSupported() && <button onClick={connectMidiDevice}>MIDI 연결</button>
-            )}
-            {midiError && <span className="error">{midiError}</span>}
-          </span>
-        </header>
-      )}
-
-      <section className="controls">
-        {mode === 'idle' && (
-          <>
-            <button className="primary" onClick={startPractice} disabled={!steps.length}>
-              ▶ 연습 시작
+      <header className="topbar">
+        <div className="tb-left">
+          {song && (
+            <button className="icon-btn" onClick={goHome} aria-label="곡 목록으로">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+                <path d="M15 5l-7 7 7 7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
-            <button onClick={startDemo} disabled={!steps.length}>
-              ♪ 들어보기
+          )}
+          <button className="logo-btn" onClick={goHome} aria-label="처음 화면">
+            <Logo />
+          </button>
+        </div>
+        <div className="tb-center">
+          {title && (
+            <>
+              <h1>{title.main}</h1>
+              <small>{[title.sub, song?.composer].filter(Boolean).join(' · ')}</small>
+            </>
+          )}
+        </div>
+        <div className="tb-right">
+          {song && isMicSupported() && (
+            <button
+              className={`mic-pill ${listening ? 'on' : micState}`}
+              onClick={() => (micState === 'off' || micState === 'error' ? startMicSession() : undefined)}
+              title={micError ?? '마이크'}
+            >
+              <span className="dot" />
+              {listening && heard !== null ? `${MIC_TEXT[micState]} · ${heardName(heard)}` : MIC_TEXT[micState]}
+              {listening && (
+                <span className="level">
+                  <span ref={micLevelRef} />
+                </span>
+              )}
             </button>
-            <span className="title">
-              {score?.title}
-              {score?.composer && <small> · {score.composer}</small>}
-              {score?.timeSignature && <small> · {score.timeSignature}박자</small>}
-            </span>
-          </>
-        )}
-        {mode === 'demo' && <button onClick={stopAll}>■ 멈추기</button>}
-        {practicing && practice && (
-          <>
-            <button onClick={stopAll}>■ 그만하기</button>
-            <button onClick={startPractice}>↺ 처음부터</button>
-            <div className="progress" aria-label={`진행률 ${progress}%`}>
-              <div style={{ width: `${progress}%` }} />
-            </div>
-            <span className="stat">
-              <span className="ok">✔ {practice.correct}</span> <span className="ng">✘ {practice.wrong}</span>
-            </span>
-            {showHint && step && (
-              <span className={`next${wrong !== null ? ' wrong' : ''}`} aria-live="polite">
-                {wrong !== null
-                  ? `✘ ${midiToSolfege(wrong)} (${midiToName(wrong)})`
-                  : step.notes.map((n) => (
-                      <span key={n.id} className={practice.hit.includes(n.midi) ? 'done' : ''}>
-                        {midiToSolfege(n.midi)}
-                        <small>{midiToName(n.midi)}</small>
-                      </span>
-                    ))}
-              </span>
-            )}
-          </>
-        )}
+          )}
+          <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="설정">
+            <GearIcon />
+          </button>
+        </div>
+      </header>
 
-        {isMicSupported() && (
-          <span className="mic">
-            <button className={micOn ? 'active' : ''} onClick={toggleMic} aria-pressed={micOn}>
-              {micOn ? MIC_LABELS[micStatus] : '🎤 마이크 켜기'}
-            </button>
-            {micOn && (
-              <span className="meter" aria-hidden>
-                <span ref={micLevelRef} />
-              </span>
-            )}
-            {micOn && (
-              <span className="heard" aria-live="polite" title="마이크에 들린 음">
-                {heard !== null ? `${midiToSolfege(heard)} ${midiToName(heard)}` : '·'}
-              </span>
-            )}
-            {micOn && micStatus === 'ai' && inference && (
-              <small className="perf" title="AI 인식 한 번에 걸리는 시간과 계산 방식">
-                AI {Math.round(inference.ms)}ms · {inference.backend}
-              </small>
-            )}
-            {!practicing && (
-              <select
-                value={sensitivity}
-                onChange={(e) => changeSensitivity(e.target.value as Sensitivity)}
-                aria-label="마이크 감도"
-              >
-                {SENSITIVITIES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    감도 {s.label}
-                  </option>
-                ))}
-              </select>
-            )}
-          </span>
-        )}
-      </section>
+      {micError && song && <p className="banner error">{micError}</p>}
 
-      {micOn && diag && (
-        <p className="diag" aria-label="마이크 진단">
-          오디오 {diag.audio === 'running' ? '정상' : diag.audio} · {Math.round(diag.sampleRate / 1000)}kHz · 수집{' '}
-          {diag.capture} {Math.round(diag.samplesPerSec / 1000)}k/초 · 입력 {Math.round(diag.levelDb)}dB · AI{' '}
-          {aiPreload === 'failed' ? '불러오기 실패' : inference ? `${inference.backend} ${Math.round(inference.ms)}ms` : '준비 중'}{' '}
-          · 최근 인식 {diag.lastNotes}음
-        </p>
-      )}
-      {loadError && <p className="error">{loadError}</p>}
-      {micError && <p className="error">{micError}</p>}
-      {xml && (
-        <ScoreView
-          xml={xml}
-          cursorBeat={cursorBeat}
-          markPassed={practicing}
-          hand={hand}
-          resetKey={resetKey}
-          wrongFlash={wrong !== null}
+      {song ? (
+        loaded && loaded.key === song.key ? (
+          <PlayScreen
+            key={song.key}
+            xml={loaded.xml}
+            score={loaded.score}
+            settings={settings}
+            bridge={bridge}
+            onFinished={onFinished}
+            diagnostics={diagnostics}
+          />
+        ) : (
+          <div className="loading">{songError ?? '악보를 불러오는 중…'}</div>
+        )
+      ) : (
+        <HomeScreen
+          levels={levels}
+          level={level}
+          onLevel={changeLevel}
+          songs={levelSongs}
+          bestStars={bestStars}
+          onSelect={openSong}
+          error={listError}
         />
       )}
 
-      <small className="version" title="앱 버전 · 커밋 · 빌드 시각">
-        {versionLabel(CURRENT)}
-      </small>
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          onChange={changeSettings}
+          onClose={() => setShowSettings(false)}
+          onTranscribe={() => {
+            // 악보 만들기는 마이크·AI를 따로 쓰므로 연습 화면에서 나온다
+            setShowSettings(false);
+            if (song) goHome();
+            setShowTranscribe(true);
+          }}
+          onImportXml={async (file) => {
+            const xml = await file.text();
+            try {
+              const parsed = parseMusicXml(xml);
+              if (!addMySong(parsed.title === '제목 없음' ? file.name.replace(/\.[^.]+$/, '') : parsed.title, xml)) {
+                window.alert('저장 공간이 모자라요.');
+                return;
+              }
+              setShowSettings(false);
+              if (song) goHome();
+              changeLevel(MY_LEVEL);
+            } catch (e) {
+              window.alert(e instanceof Error ? e.message : String(e));
+            }
+          }}
+          mySongs={mySongs}
+          onDeleteMySong={deleteMySong}
+          midi={{ supported: isMidiSupported(), devices: midiDevices, error: midiError, connect: connectMidiDevice }}
+          version={versionLabel(CURRENT)}
+        />
+      )}
 
-      {showResult && practice && (
-        <ResultPanel
-          result={summarize(practice)}
-          onRetry={startPractice}
+      {showTranscribe && (
+        <TranscribeDialog
+          initialTab={youtubeMode ? 'youtube' : 'file'}
           onClose={() => {
-            setShowResult(false);
-            stopAll();
+            setShowTranscribe(false);
+            // 유튜브 모드에서 나오면 빠른 음 인식 모드로 돌아간다
+            if (youtubeMode) location.replace(location.pathname);
+          }}
+          onSave={(t, xml) => {
+            if (!addMySong(t, xml)) return false;
+            setShowTranscribe(false);
+            changeLevel(MY_LEVEL);
+            if (youtubeMode) location.replace(location.pathname);
+            return true;
           }}
         />
       )}
     </div>
   );
+}
+
+const SOLFEGE = ['도', '도#', '레', '레#', '미', '파', '파#', '솔', '솔#', '라', '라#', '시'];
+function heardName(midi: number): string {
+  return `${SOLFEGE[midi % 12]}${Math.floor(midi / 12) - 1}`;
 }

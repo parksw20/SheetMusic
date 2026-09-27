@@ -1,7 +1,24 @@
 import { OpenSheetMusicDisplay, type GraphicalNote } from 'opensheetmusicdisplay';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { planGrid } from '../score/grid';
-import type { HandFilter } from '../score/model';
+import type { HandFilter, Staff } from '../score/model';
+
+/** 방금 친 음 (악보 위에 잠깐 표시) */
+export interface PlayedMark {
+  id: number;
+  midi: number;
+  /** 맞음이면 초록, 틀림이면 빨강 */
+  ok: boolean;
+  /** 친 순간 연습하던 위치 (박) */
+  beat: number;
+  staff: Staff;
+}
+
+/** 반복 연습 구간 (마디 번호, 1부터) */
+export interface LoopRange {
+  from: number;
+  to: number;
+}
 
 interface Props {
   xml: string;
@@ -9,12 +26,19 @@ interface Props {
   cursorBeat: number;
   /** true면 커서가 지나간 음을 초록색으로 칠한다 (연습 중) */
   markPassed: boolean;
+  /** 이 박보다 앞의 음은 칠하지 않는다 (구간 반복) */
+  colorFromBeat: number;
   /** 칠할 음을 고를 때 쓰는 손 선택 */
   hand: HandFilter;
   /** 값이 바뀌면 칠해 둔 색을 지운다 */
   resetKey: number;
-  /** 틀린 음을 쳤을 때 잠깐 true */
-  wrongFlash: boolean;
+  /** 손가락 번호 보기 */
+  fingering: boolean;
+  marks: PlayedMark[];
+  loop: LoopRange | null;
+  /** true면 악보를 드래그해서 반복 구간을 고른다 */
+  selecting: boolean;
+  onSelectLoop: (range: LoopRange) => void;
 }
 
 const EPS = 1e-6;
@@ -25,20 +49,26 @@ const MAX_ZOOM = 2.4;
 /** .score 좌우 안쪽 여백 합 (px). styles.css와 맞춘다 */
 const SCORE_PADDING_PX = 24;
 const HIT_CLASS = 'sm-hit';
+/** 드래그하다 위아래 가장자리 이 거리 안에 오면 악보를 스크롤한다 (px) */
+const EDGE_PX = 80;
 
 function staffNumber(g: GraphicalNote): number {
   const staff = g.sourceNote.ParentStaff;
   return staff.ParentInstrument.Staves.indexOf(staff) + 1;
 }
 
-function setBaseRules(osmd: OpenSheetMusicDisplay) {
+function setBaseRules(osmd: OpenSheetMusicDisplay, fingering: boolean) {
   const rules = osmd.EngravingRules;
   rules.RenderXMeasuresPerLineAkaSystem = MEASURES_PER_LINE;
   rules.FixedMeasureWidth = false;
   rules.StretchLastSystemLine = false;
-  // 박자표는 첫 줄에만 붙어 첫 줄만 앞머리가 길어진다. 빼서 모든 줄의 앞머리를 음자리표로 같게 한다.
-  // 박자는 화면 상단에 따로 표시한다.
+  // 박자표는 첫 줄에만 붙어 첫 줄만 앞머리가 길어진다. 빼서 모든 줄의 앞머리를 음자리표로 같게 한다
   rules.RenderTimeSignatures = false;
+  // 마디 번호는 줄 첫머리에만 (손가락 번호와 겹치지 않게)
+  rules.RenderMeasureNumbersOnlyAtSystemStart = true;
+  rules.RenderFingerings = fingering;
+  // 오른손 번호는 위, 왼손 번호는 아래 (MusicXML의 placement를 따른다)
+  rules.FingeringPositionFromXML = true;
 }
 
 /**
@@ -47,10 +77,10 @@ function setBaseRules(osmd: OpenSheetMusicDisplay) {
  *  2. planGrid로 배율(iPad 세로 폭에 4칸이 꽉 차는 값)과 마디별 너비 배수를 정해 다시 그린다.
  * 가로 화면에서는 같은 배율로 4칸이 화면 폭을 가득 채운다.
  */
-function renderGrid(osmd: OpenSheetMusicDisplay, containerPx: number): void {
+function renderGrid(osmd: OpenSheetMusicDisplay, containerPx: number, fingering: boolean): void {
   const sheet = osmd.Sheet;
   const rules = osmd.EngravingRules;
-  setBaseRules(osmd);
+  setBaseRules(osmd, fingering);
   sheet.SourceMeasures.forEach((m) => (m.WidthFactor = 1));
   rules.LastSystemMaxScalingFactor = 100;
   osmd.Zoom = 1;
@@ -79,15 +109,82 @@ function renderGrid(osmd: OpenSheetMusicDisplay, containerPx: number): void {
   osmd.render();
 }
 
+/** 마디 하나의 화면 위치 (악보 영역 기준 px) */
+interface MeasureBox {
+  x: number;
+  width: number;
+  top: number;
+  bottom: number;
+  /** 보표별 맨 윗줄 y */
+  staffTop: number[];
+}
+
+/** 마디 위치를 잰다. OSMD 단위는 배율 1에서 10px */
+function measureBoxes(osmd: OpenSheetMusicDisplay, sheetEl: HTMLElement): MeasureBox[] {
+  const svg = sheetEl.querySelector('svg');
+  if (!svg) return [];
+  const s = svg.getBoundingClientRect();
+  const w = sheetEl.getBoundingClientRect();
+  const ox = s.left - w.left;
+  const oy = s.top - w.top;
+  const u = 10 * osmd.Zoom;
+  return osmd.GraphicSheet.MeasureList.map((staves) => {
+    const list = staves.filter(Boolean);
+    const first = list[0].PositionAndShape;
+    const last = list[list.length - 1].PositionAndShape;
+    return {
+      x: ox + first.AbsolutePosition.x * u,
+      width: first.Size.width * u,
+      top: oy + (first.AbsolutePosition.y - 3) * u,
+      bottom: oy + (last.AbsolutePosition.y + 7) * u,
+      staffTop: list.map((m) => oy + m.PositionAndShape.AbsolutePosition.y * u),
+    };
+  });
+}
+
+const LETTER = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6]; // C C# D D# E F F# G G# A A# B
+const SHARP = [false, true, false, true, false, false, true, false, true, false, true, false];
+/** 흰 건반 기준 위치 (C4 = 28) */
+const diatonic = (midi: number) => (Math.floor(midi / 12) - 1) * 7 + LETTER[midi % 12];
+/** 보표 맨 윗줄 음: 높은음자리 F5, 낮은음자리 A3 */
+const TOP_LINE = { 1: diatonic(77), 2: diatonic(57) };
+
+interface MarkPos {
+  id: number;
+  ok: boolean;
+  x: number;
+  y: number;
+  sharp: boolean;
+  /** 덧줄 y 목록 */
+  ledgers: number[];
+  half: number;
+}
+
 /** OpenSheetMusicDisplay로 악보를 그리고, cursorBeat 위치로 커서를 옮긴다. */
-export function ScoreView({ xml, cursorBeat, markPassed, hand, resetKey, wrongFlash }: Props) {
+export function ScoreView(props: Props) {
+  const { xml, cursorBeat, markPassed, colorFromBeat, hand, resetKey, fingering, marks, loop, selecting, onSelectLoop } = props;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [boxes, setBoxes] = useState<MeasureBox[]>([]);
+  /** 커서가 지나간 위치별 x와 마디 (친 음 표시 위치) */
+  const beatPos = useRef(new Map<number, { x: number; measure: number }>());
+  const [markPos, setMarkPos] = useState<MarkPos[]>([]);
+  const [drag, setDrag] = useState<LoopRange | null>(null);
+  /** 다시 그린 뒤 커서를 처음부터 다시 옮기게 하는 값 */
+  const [cursorKey, setCursorKey] = useState(0);
+  const fingeringRef = useRef(fingering);
+  fingeringRef.current = fingering;
+
   const draw = (osmd: OpenSheetMusicDisplay) => {
     const el = containerRef.current;
-    if (el) renderGrid(osmd, el.offsetWidth);
+    if (!el) return;
+    renderGrid(osmd, el.offsetWidth, fingeringRef.current);
+    beatPos.current.clear();
+    if (sheetRef.current) setBoxes(measureBoxes(osmd, sheetRef.current));
   };
 
   // OSMD 인스턴스는 하나만 만든다. 곡마다 새로 만들면 이전 인스턴스의 빈 SVG와
@@ -102,7 +199,7 @@ export function ScoreView({ xml, cursorBeat, markPassed, hand, resetKey, wrongFl
       drawComposer: false,
       drawPartNames: false,
       followCursor: true,
-      cursorsOptions: [{ type: 0, color: '#3b82f6', alpha: 0.35, follow: true }],
+      cursorsOptions: [{ type: 0, color: '#6d63ff', alpha: 0.28, follow: true }],
     });
     return () => {
       osmdRef.current?.clear();
@@ -134,6 +231,15 @@ export function ScoreView({ xml, cursorBeat, markPassed, hand, resetKey, wrongFl
     };
   }, [xml]);
 
+  // 손가락 번호를 켜고 끄면 다시 그린다
+  useEffect(() => {
+    const osmd = osmdRef.current;
+    if (!ready || !osmd) return;
+    draw(osmd);
+    osmd.cursor.reset();
+    setCursorKey((k) => k + 1);
+  }, [fingering]);
+
   // 화면 회전 등으로 폭이 바뀌면 다시 맞춰 그린다
   useEffect(() => {
     const el = containerRef.current;
@@ -148,7 +254,8 @@ export function ScoreView({ xml, cursorBeat, markPassed, hand, resetKey, wrongFl
         const osmd = osmdRef.current;
         if (!osmd) return;
         draw(osmd);
-        osmd.cursor.update();
+        osmd.cursor.reset();
+        setCursorKey((k) => k + 1);
       }, 150);
     });
     observer.observe(el);
@@ -160,15 +267,28 @@ export function ScoreView({ xml, cursorBeat, markPassed, hand, resetKey, wrongFl
 
   useEffect(() => {
     containerRef.current?.querySelectorAll(`.${HIT_CLASS}`).forEach((el) => el.classList.remove(HIT_CLASS));
-  }, [resetKey, xml]);
+  }, [resetKey, xml, cursorKey]);
 
-  useEffect(() => {
+  const cursorX = (): number | null => {
+    const img = osmdRef.current?.cursor.cursorElement;
+    const sheet = sheetRef.current;
+    if (!img || !sheet) return null;
+    const r = img.getBoundingClientRect();
+    return r.left - sheet.getBoundingClientRect().left + r.width / 2;
+  };
+
+  useLayoutEffect(() => {
     const cursor = osmdRef.current?.cursor;
     if (!ready || !cursor) return;
     const position = () => cursor.Iterator.currentTimeStamp.RealValue * 4; // 온음표 → 4분음표
+    const remember = () => {
+      const x = cursorX();
+      if (x !== null) beatPos.current.set(Math.round(position() * 1000), { x, measure: cursor.Iterator.CurrentMeasureIndex });
+    };
     if (position() > cursorBeat + EPS) cursor.reset();
+    remember();
     while (!cursor.Iterator.EndReached && position() < cursorBeat - EPS) {
-      if (markPassed) {
+      if (markPassed && position() >= colorFromBeat - EPS) {
         for (const g of cursor.GNotesUnderCursor()) {
           if (g.sourceNote.isRest()) continue;
           const staff = staffNumber(g);
@@ -177,13 +297,143 @@ export function ScoreView({ xml, cursorBeat, markPassed, hand, resetKey, wrongFl
         }
       }
       cursor.next();
+      remember();
     }
-  }, [cursorBeat, ready, markPassed, hand]);
+  }, [cursorBeat, ready, markPassed, colorFromBeat, hand, cursorKey]);
+
+  // 친 음 위치: 친 순간의 연습 위치(박)의 x, 음높이에 맞는 오선 위 y
+  useLayoutEffect(() => {
+    const osmd = osmdRef.current;
+    if (!ready || !osmd) return;
+    const half = 5 * osmd.Zoom; // 오선 한 칸의 절반 (px)
+    setMarkPos((prev) => {
+      const known = new Map(prev.map((p) => [p.id, p]));
+      return marks.flatMap((m) => {
+        const old = known.get(m.id);
+        if (old) return [{ ...old, ok: m.ok }];
+        const at = beatPos.current.get(Math.round(m.beat * 1000));
+        const x = at?.x ?? cursorX();
+        const box = boxes[at?.measure ?? osmd.cursor.Iterator.CurrentMeasureIndex];
+        if (x === null || !box) return [];
+        const top = box.staffTop[m.staff - 1] ?? box.staffTop[0];
+        const d = diatonic(m.midi);
+        const topLine = TOP_LINE[m.staff];
+        const y = top + (topLine - d) * half;
+        // 덧줄: 오선(맨 윗줄 ~ 4칸 아래) 밖이면 두 칸마다
+        const ledgers: number[] = [];
+        for (let k = topLine + 2; k <= d; k += 2) ledgers.push(top + (topLine - k) * half);
+        for (let k = topLine - 10; k >= d; k -= 2) ledgers.push(top + (topLine - k) * half);
+        return [{ id: m.id, ok: m.ok, x, y, sharp: SHARP[m.midi % 12], ledgers, half }];
+      });
+    });
+  }, [marks, ready, boxes]);
+
+  // ── 반복 구간 고르기: 드래그한 마디들, 가장자리에서는 자동 스크롤 ──
+  const pointer = useRef<{ x: number; y: number; start: number } | null>(null);
+  const measureAt = (clientX: number, clientY: number): number | null => {
+    const sheet = sheetRef.current;
+    if (!sheet || !boxes.length) return null;
+    const r = sheet.getBoundingClientRect();
+    const x = clientX - r.left;
+    const y = clientY - r.top;
+    let best: number | null = null;
+    let bestDist = Infinity;
+    boxes.forEach((b, i) => {
+      const dy = y < b.top ? b.top - y : y > b.bottom ? y - b.bottom : 0;
+      const dx = x < b.x ? b.x - x : x > b.x + b.width ? x - (b.x + b.width) : 0;
+      const dist = dy * 4 + dx;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i + 1;
+      }
+    });
+    return best;
+  };
+
+  useEffect(() => {
+    if (!selecting) return;
+    let raf = 0;
+    const tick = () => {
+      const p = pointer.current;
+      const scroller = scrollRef.current;
+      if (p && scroller) {
+        const r = scroller.getBoundingClientRect();
+        const speed =
+          p.y < r.top + EDGE_PX ? -(r.top + EDGE_PX - p.y) / 4 : p.y > r.bottom - EDGE_PX ? (p.y - (r.bottom - EDGE_PX)) / 4 : 0;
+        if (speed) {
+          scroller.scrollTop += speed;
+          const m = measureAt(p.x, p.y);
+          if (m) setDrag({ from: p.start, to: m });
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [selecting, boxes]);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    const m = measureAt(e.clientX, e.clientY);
+    if (!m) return;
+    (e.target as Element).setPointerCapture(e.pointerId);
+    pointer.current = { x: e.clientX, y: e.clientY, start: m };
+    setDrag({ from: m, to: m });
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const p = pointer.current;
+    if (!p) return;
+    p.x = e.clientX;
+    p.y = e.clientY;
+    const m = measureAt(e.clientX, e.clientY);
+    if (m) setDrag({ from: p.start, to: m });
+  };
+  const onPointerUp = () => {
+    const d = drag;
+    pointer.current = null;
+    setDrag(null);
+    if (d) onSelectLoop({ from: Math.min(d.from, d.to), to: Math.max(d.from, d.to) });
+  };
+
+  const shown = drag ? { from: Math.min(drag.from, drag.to), to: Math.max(drag.from, drag.to) } : loop;
 
   return (
-    <div className={`score${wrongFlash ? ' flash-wrong' : ''}`}>
+    <div ref={scrollRef} className={`score${selecting ? ' selecting' : ''}`}>
       {error && <p className="error">악보를 표시할 수 없습니다: {error}</p>}
-      <div ref={containerRef} />
+      <div ref={sheetRef} className="sheet">
+        <div ref={containerRef} />
+        <div className="sheet-overlay" aria-hidden>
+          {shown &&
+            boxes.slice(shown.from - 1, shown.to).map((b, i) => (
+              <div
+                key={i}
+                className={`loop-box${drag ? ' dragging' : ''}`}
+                style={{ left: b.x, top: b.top, width: b.width, height: b.bottom - b.top }}
+              />
+            ))}
+          {markPos.map((m) => (
+            <div key={m.id} className={`mark ${m.ok ? 'ok' : 'ng'}`} style={{ left: m.x, top: m.y }}>
+              {m.ledgers.map((y, i) => (
+                <span key={i} className="ledger" style={{ top: y - m.y, width: m.half * 5, left: -m.half * 2.5 }} />
+              ))}
+              <span className="head" style={{ width: m.half * 2.6, height: m.half * 2, left: -m.half * 1.3, top: -m.half }} />
+              {m.sharp && (
+                <span className="acc" style={{ fontSize: m.half * 3.4, left: -m.half * 3.8, top: -m.half * 2.2 }}>
+                  ♯
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+        {selecting && (
+          <div
+            className="select-layer"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          />
+        )}
+      </div>
     </div>
   );
 }
