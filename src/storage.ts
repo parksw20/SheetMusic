@@ -31,8 +31,12 @@ export function saveBestStars(value: Record<string, number>): void {
   save(BEST_KEY, value);
 }
 
+/** wait: 맞는 음을 칠 때까지 기다린다, rhythm: 템포대로 흐르며 박자까지 본다 */
+export type PracticeStyle = 'wait' | 'rhythm';
+
 export interface Settings {
   hand: HandFilter;
+  practiceStyle: PracticeStyle;
   sensitivity: Sensitivity;
   /** 악보에 손가락 번호 보기 */
   fingering: boolean;
@@ -47,6 +51,7 @@ export interface Settings {
 const SETTINGS_KEY = 'sheetmusic.settings';
 const DEFAULT_SETTINGS: Settings = {
   hand: 'both',
+  practiceStyle: 'wait',
   sensitivity: 'normal',
   fingering: true,
   showHint: true,

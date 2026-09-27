@@ -304,6 +304,7 @@ export default function App() {
             xml={loaded.xml}
             score={loaded.score}
             settings={settings}
+            onSettings={changeSettings}
             bridge={bridge}
             onFinished={onFinished}
             diagnostics={diagnostics}

@@ -126,6 +126,14 @@ describe('OnsetJudge', () => {
     expect(index).toBe(2);
   });
 
+  it('음높이가 흔들리는 음(사람 목소리)은 틀림으로 세지 않는다', () => {
+    const j = new OnsetJudge(0.5);
+    const log: string[] = [];
+    const batches = [[{ midi: 57, time: 1000, confidence: 0.9, wobble: 1.33 }], [{ midi: 59, time: 2000, confidence: 0.9, wobble: 0 }], []];
+    for (const b of batches) j.judgeBatch(b, () => [60], (m, v) => log.push(`${v} ${m}`));
+    expect(log).toEqual(['wrong 59']);
+  });
+
   it('연습 중이 아니면(기대 음 없음) 판정하지 않는다', () => {
     expect(practice([], [[[60, 0, 1]]]).log).toEqual([]);
   });

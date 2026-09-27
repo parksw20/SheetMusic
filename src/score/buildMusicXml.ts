@@ -131,8 +131,12 @@ export function assignFingering(tokens: Token[], hand: 'rh' | 'lh'): void {
   }
   if (!nodes.length) return;
 
+  /** 엄지가 도나 솔에 있는 기본 자리 (초보 교재의 "도 자리", "솔 자리") */
+  const home = (thumb: number) => [0, 4].includes(((thumb % 7) + 7) % 7);
   const noteCost = (o: Node['options'][number]) =>
-    o.fingers.reduce((c, f, i) => c + (o.black[i] ? (f === 1 ? 2 : f === 5 ? 0.5 : 0) : 0), 0);
+    o.fingers.reduce((c, f, i) => c + (o.black[i] ? (f === 1 ? 2 : f === 5 ? 0.5 : 0) : 0), 0) +
+    // 기본 자리를 벗어나 있으면 음마다 조금씩 비용: 손을 옮겨야 할 때만 벗어난다
+    (home(o.thumb) ? 0 : 0.6);
   const moveCost = (a: Node['options'][number], b: Node['options'][number], sameNote: boolean) => {
     let c = 0;
     if (a.thumb !== b.thumb) c += 2 + Math.abs(a.thumb - b.thumb) * 0.3;
@@ -162,7 +166,7 @@ export function assignFingering(tokens: Token[], hand: 'rh' | 'lh'): void {
       let best = Infinity;
       let arg = 0;
       prev.options.forEach((p, j) => {
-        const c = cost[j] + moveCost(p, o, sameNote) + (sameNote && p.lead !== o.lead ? 1 : 0);
+        const c = cost[j] + moveCost(p, o, sameNote) + (sameNote && p.lead !== o.lead ? 4 : 0);
         if (c < best) {
           best = c;
           arg = j;

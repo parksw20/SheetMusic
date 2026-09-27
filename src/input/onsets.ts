@@ -11,6 +11,8 @@ export interface NoteOnset {
   time: number;
   /** 음의 세기 0~1 (basic-pitch의 amplitude: 음이 울리는 동안의 평균 활성도) */
   confidence: number;
+  /** 음높이 흔들림 (반음) */
+  wobble?: number;
 }
 
 /** basic-pitch outputToNotesPoly → noteFramesToTime 결과 중 여기서 쓰는 값 */
@@ -18,6 +20,8 @@ export interface TranscribedNote {
   pitchMidi: number;
   startTimeSeconds: number;
   amplitude: number;
+  /** 음높이 흔들림 (반음). 목소리 거르기에 쓴다. 모르면 없음 */
+  wobble?: number;
 }
 
 /**
@@ -73,7 +77,7 @@ export class NoteTracker {
       const last = this.lastStart.get(n.pitchMidi);
       if (last !== undefined && time < last + SAME_NOTE_MS) continue;
       this.lastStart.set(n.pitchMidi, time);
-      found.push({ midi: n.pitchMidi, time, confidence: n.amplitude });
+      found.push({ midi: n.pitchMidi, time, confidence: n.amplitude, wobble: n.wobble });
     }
     return found.sort((a, b) => a.time - b.time);
   }
@@ -130,6 +134,11 @@ const CHORD_WINDOW_MS = 150;
 const SAME_STRIKE_MS = 100;
 /** 방금 맞힌 음이 다시 잡혀도 틀림으로 세지 않는 시간 */
 const RECENT_HIT_MS = 500;
+/**
+ * 음높이가 이만큼(반음) 이상 흔들리면 사람 목소리로 보고 틀림으로 세지 않는다.
+ * 피아노 음은 0~0.33, 목소리는 떨림과 억양 때문에 0.67 이상이었다 (합성 목소리 + 실제 피아노 녹음으로 잰 값).
+ */
+export const VOICE_WOBBLE = 0.6;
 
 export class OnsetJudge {
   private hitTimes: number[] = [];
@@ -186,6 +195,7 @@ export class OnsetJudge {
     for (const onset of ready) {
       if (getExpected().length === 0) continue;
       if (onset.confidence < this.wrongThreshold) continue;
+      if ((onset.wobble ?? 0) >= VOICE_WOBBLE) continue;
       if (this.hitTimes.some((t) => Math.abs(onset.time - t) < CHORD_WINDOW_MS)) continue;
       const recent = this.recentHits.get(onset.midi);
       if (recent !== undefined && onset.time - recent < RECENT_HIT_MS) continue;

@@ -43,8 +43,8 @@ export interface EdgeOnset {
 }
 
 export interface Analysis {
-  /** 확정된 음 (공식 outputToNotesPoly 결과, 창 시작 기준 초) */
-  notes: NoteEventTime[];
+  /** 확정된 음 (공식 outputToNotesPoly 결과, 창 시작 기준 초) + 음높이 흔들림 */
+  notes: (NoteEventTime & { wobble: number })[];
   /** 창 끝 0.17초 안에서 막 시작된 음 후보. 쳐야 할 음을 빨리 확인하는 데 쓴다 */
   edge: EdgeOnset[];
 }
@@ -59,13 +59,15 @@ type GraphModel = import('@tensorflow/tfjs').GraphModel;
 export async function analyzeWith(model: GraphModel, audio: Float32Array, onsetThreshold: number): Promise<Analysis> {
   const tf = await import('@tensorflow/tfjs');
   const { outputToNotesPoly, noteFramesToTime } = await import('@spotify/basic-pitch');
-  const [framesT, onsetsT] = tf.tidy(
-    () => model.execute(tf.tensor3d(audio, [1, audio.length, 1]), ['Identity_1', 'Identity_2']) as import('@tensorflow/tfjs').Tensor[],
+  const [framesT, onsetsT, contoursT] = tf.tidy(
+    () =>
+      model.execute(tf.tensor3d(audio, [1, audio.length, 1]), ['Identity_1', 'Identity_2', 'Identity']) as import('@tensorflow/tfjs').Tensor[],
   );
-  const [frames, onsets] = (await Promise.all([framesT.data(), onsetsT.data()])) as Float32Array[];
+  const [frames, onsets, contours] = (await Promise.all([framesT.data(), onsetsT.data(), contoursT.data()])) as Float32Array[];
   const nFrames = framesT.shape[1] ?? frames.length / KEYS;
   framesT.dispose();
   onsetsT.dispose();
+  contoursT.dispose();
 
   const rows = (d: Float32Array, from: number, to: number) => {
     const out: number[][] = [];
@@ -74,9 +76,12 @@ export async function analyzeWith(model: GraphModel, audio: Float32Array, onsetT
   };
   const frameSec = FFT_HOP / BASIC_PITCH_SAMPLE_RATE;
   const last = nFrames - TRIM_FRAMES;
-  const notes = noteFramesToTime(
-    outputToNotesPoly(rows(frames, TRIM_FRAMES, last), rows(onsets, TRIM_FRAMES, last), onsetThreshold, FRAME_THRESHOLD, MIN_NOTE_FRAMES),
-  ).map((n) => ({ ...n, startTimeSeconds: n.startTimeSeconds + TRIM_FRAMES * frameSec }));
+  const poly = outputToNotesPoly(rows(frames, TRIM_FRAMES, last), rows(onsets, TRIM_FRAMES, last), onsetThreshold, FRAME_THRESHOLD, MIN_NOTE_FRAMES);
+  const notes = noteFramesToTime(poly).map((n, i) => ({
+    ...n,
+    startTimeSeconds: n.startTimeSeconds + TRIM_FRAMES * frameSec,
+    wobble: pitchWobble(contours, nFrames, poly[i].startFrame + TRIM_FRAMES, poly[i].durationFrames, poly[i].pitchMidi),
+  }));
 
   // 창 끝 구간: 건반마다 가장 높은 타건 봉우리 (마지막 프레임은 올라가는 중이면 후보)
   const best = new Map<number, EdgeOnset>();
@@ -90,6 +95,37 @@ export async function analyzeWith(model: GraphModel, audio: Float32Array, onsetT
     }
   }
   return { notes, edge: [...best.values()] };
+}
+
+/** 음높이 곡선 칸 수 (반음당 3칸) */
+const CONTOUR_BINS = KEYS * 3;
+/** 흔들림을 볼 앞부분 길이 (프레임, 약 0.23초) */
+const WOBBLE_FRAMES = 20;
+
+/**
+ * 음이 울리는 동안 음높이가 얼마나 흔들리는지(반음 단위, 가장 높은 곳 - 낮은 곳).
+ * 피아노 음은 음높이가 고정이라 거의 0이고, 사람 목소리는 떨림(비브라토)과 말 억양 때문에 흔들린다.
+ * 공식 모델의 음높이 곡선(contour, 반음당 3칸)에서 음 가까이(±4칸)의 가장 센 칸을 따라간다.
+ */
+function pitchWobble(contours: Float32Array, nFrames: number, start: number, duration: number, midi: number): number {
+  const center = (midi - MIDI_OFFSET) * 3;
+  let lo = Infinity;
+  let hi = -Infinity;
+  const end = Math.min(nFrames, start + Math.min(duration, WOBBLE_FRAMES));
+  for (let f = start; f < end; f++) {
+    let arg = center;
+    let best = -Infinity;
+    for (let b = Math.max(0, center - 4); b <= Math.min(CONTOUR_BINS - 1, center + 4); b++) {
+      const v = contours[f * CONTOUR_BINS + b];
+      if (v > best) {
+        best = v;
+        arg = b;
+      }
+    }
+    lo = Math.min(lo, arg);
+    hi = Math.max(hi, arg);
+  }
+  return hi >= lo ? (hi - lo) / 3 : 0;
 }
 
 export interface Transcriber {

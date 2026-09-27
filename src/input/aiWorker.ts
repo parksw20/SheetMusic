@@ -13,7 +13,7 @@ export type WorkerResponse =
   | { type: 'error'; message: string; id?: number }
   | { type: 'progress'; id: number; percent: number }
   | { type: 'transcribed'; id: number; notes: FullNote[] }
-  | { type: 'result'; id: number; notes: { pitchMidi: number; startTimeSeconds: number; amplitude: number }[]; edge: EdgeOnset[] };
+  | { type: 'result'; id: number; notes: { pitchMidi: number; startTimeSeconds: number; amplitude: number; wobble?: number }[]; edge: EdgeOnset[] };
 
 let transcriber: Promise<Transcriber> | null = null;
 const post = (m: WorkerResponse) => (self as unknown as DedicatedWorkerGlobalScope).postMessage(m);
@@ -42,7 +42,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     post({
       type: 'result',
       id: m.id,
-      notes: notes.map(({ pitchMidi, startTimeSeconds, amplitude }) => ({ pitchMidi, startTimeSeconds, amplitude })),
+      notes: notes.map(({ pitchMidi, startTimeSeconds, amplitude, wobble }) => ({ pitchMidi, startTimeSeconds, amplitude, wobble })),
       edge,
     });
   } catch (err) {

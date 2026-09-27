@@ -1,0 +1,5 @@
+피아노 소리: Salamander Grand Piano (Alexander Holm, CC-BY 3.0)
+https://archive.org/details/SalamanderGrandPianoV3
+MP3 변환본: tonejs-instruments (Nicholaus Brosowsky, CC-BY 3.0 / npm tonejs-instrument-piano-mp3, MIT)
+https://github.com/nbrosowsky/tonejs-instruments
+이 폴더에는 3반음 간격 21개 음만 넣었고, 사이 음은 Tone.Sampler가 음높이를 바꿔 만든다.

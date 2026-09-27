@@ -1,4 +1,5 @@
 import { preferPlayAndRecord } from '../audio/session';
+import { acquireMicStream, releaseMicStream } from '../input/mic';
 
 /** Basic Pitch 입력 샘플레이트 */
 export const SAMPLE_RATE = 22050;
@@ -45,9 +46,7 @@ export async function startRecording(onLevel: (level: number) => void): Promise<
   preferPlayAndRecord();
   const ctx = new AudioContext();
   const resumed = ctx.resume().catch(() => undefined);
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-  });
+  const stream = await acquireMicStream();
   await resumed;
   const source = ctx.createMediaStreamSource(stream);
   const node = ctx.createScriptProcessor(4096, 1, 1);
@@ -71,7 +70,7 @@ export async function startRecording(onLevel: (level: number) => void): Promise<
 
   const close = () => {
     node.disconnect();
-    stream.getTracks().forEach((t) => t.stop());
+    releaseMicStream(stream);
     void ctx.close();
   };
   return {
