@@ -24,6 +24,7 @@ import {
   type Score,
 } from './score/model';
 import { parseMusicXml } from './score/parseMusicXml';
+import { CURRENT, fetchDeployed, reloadTo, versionLabel, type VersionInfo } from './version';
 import { loadBestStars, loadSensitivity, saveBestStars, saveSensitivity } from './storage';
 
 interface SongInfo {
@@ -84,6 +85,7 @@ export default function App() {
   const [heard, setHeard] = useState<number | null>(null);
   const [inference, setInference] = useState<{ ms: number; backend: string } | null>(null);
   const [diag, setDiag] = useState<MicDiagnostics | null>(null);
+  const [deployed, setDeployed] = useState<VersionInfo | null>(null);
   const [aiPreload, setAiPreload] = useState<'loading' | 'ready' | 'failed'>('loading');
   const heardTimer = useRef<number | undefined>(undefined);
   const [micError, setMicError] = useState<string | null>(null);
@@ -107,6 +109,20 @@ export default function App() {
         .catch(() => setAiPreload('failed'));
     }, 1000);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  // 새 버전 확인: 앱을 열 때, 5분마다, 다른 앱에 갔다 돌아왔을 때
+  useEffect(() => {
+    if (CURRENT.commit === 'dev') return;
+    const check = () => void fetchDeployed().then((v) => v && v.commit !== CURRENT.commit && setDeployed(v));
+    check();
+    const timer = window.setInterval(check, 5 * 60 * 1000);
+    const onVisible = () => document.visibilityState === 'visible' && check();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   // 곡 목록
@@ -316,6 +332,14 @@ export default function App() {
 
   return (
     <div className="app">
+      {deployed && (
+        <div className="update" role="status">
+          새 버전이 있습니다 ({versionLabel(deployed)})
+          <button className="primary" onClick={() => reloadTo(deployed)}>
+            새로고침
+          </button>
+        </div>
+      )}
       {!practicing && (
         <header className="toolbar">
           <select
@@ -498,6 +522,10 @@ export default function App() {
           wrongFlash={wrong !== null}
         />
       )}
+
+      <small className="version" title="앱 버전 · 커밋 · 빌드 시각">
+        {versionLabel(CURRENT)}
+      </small>
 
       {showResult && practice && (
         <ResultPanel
