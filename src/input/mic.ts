@@ -69,14 +69,15 @@ const AI_IDLE_MS = 50;
  * 감도별 AI 기준값.
  *  onset: basic-pitch outputToNotesPoly의 타건 확률 기준 (공식 기본값 0.5).
  *    실제 피아노 녹음에서 타건은 작게 쳐도 0.86 이상이었고, 방 잡음은 여러 건반에 0.5~0.6짜리 가짜 타건을 만든다.
- *  wrong: 기대하지 않은 음을 틀림으로 볼 최소 세기(amplitude)
+ *  wrong: 기대하지 않은 음을 틀림으로 볼 최소 세기(amplitude). 사람 목소리(대부분 0.5~0.6)를 틀림으로 세지 않게
+ *    피아노 실수(0.67 이상)보다 조금 낮게 둔다. 음높이가 흔들리는 음도 목소리로 보고 뺀다(VOICE_WOBBLE)
  *    창 끝(확정 전) 구간에서 쳐야 할 음을 먼저 맞음으로 볼 때(withFastNotes)도 같은 기준을 쓴다.
  *    그보다 낮추면 방 잡음이 곧 칠 음을 미리 맞히는 경우가 생겼다.
  */
 const AI_THRESHOLDS: Record<Sensitivity, { onset: number; wrong: number }> = {
-  low: { onset: 0.8, wrong: 0.6 },
-  normal: { onset: 0.7, wrong: 0.5 },
-  high: { onset: 0.55, wrong: 0.4 },
+  low: { onset: 0.8, wrong: 0.7 },
+  normal: { onset: 0.7, wrong: 0.6 },
+  high: { onset: 0.55, wrong: 0.5 },
 };
 
 const TAP_WORKLET = `
@@ -95,6 +96,29 @@ class Tap extends AudioWorkletProcessor {
 }
 registerProcessor('sheetmusic-tap', Tap);
 `;
+
+let sharedStream: MediaStream | null = null;
+
+/**
+ * 마이크 입력을 받는다. 한 번 받은 입력은 닫지 않고 다시 쓴다.
+ * iPad Safari는 마이크를 완전히 닫았다가 다시 열 때마다 권한을 또 묻기 때문이다.
+ * 쓰지 않을 때는 releaseMicStream()으로 끈다(enabled = false, 소리가 들어오지 않는다).
+ */
+export async function acquireMicStream(): Promise<MediaStream> {
+  const live = sharedStream?.getAudioTracks().some((t) => t.readyState === 'live');
+  if (!live) {
+    sharedStream = await navigator.mediaDevices.getUserMedia({
+      // 음성 통화용 처리를 끄지 않으면 지속음이 깎이고 음량이 출렁인다
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  }
+  sharedStream!.getAudioTracks().forEach((t) => (t.enabled = true));
+  return sharedStream!;
+}
+
+export function releaseMicStream(stream: MediaStream): void {
+  stream.getAudioTracks().forEach((t) => (t.enabled = false));
+}
 
 export function isMicSupported(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
@@ -118,10 +142,7 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
 
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      // 음성 통화용 처리를 끄지 않으면 지속음이 깎이고 음량이 출렁인다
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    stream = await acquireMicStream();
   } catch (e) {
     void ctx.close();
     preferPlayback();
@@ -155,7 +176,13 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   const blockSamples = Math.round((sr * LEVEL_BLOCK_MS) / 1000);
   let blockSum = 0;
   let blockCount = 0;
+  /**
+   * 오디오 시간(수집한 샘플 수로 센 ms) → performance.now 시각으로 바꾸는 차이.
+   * 조각이 도착한 순간 그 조각 끝이 "지금"이므로, 가장 작은 (지금 - 오디오 시간)이 실제 차이에 가깝다.
+   */
+  let audioToPerf = Infinity;
   const push = (chunk: Float32Array) => {
+    audioToPerf = Math.min(audioToPerf, performance.now() - ((written + chunk.length) / sr) * 1000);
     for (let i = 0; i < chunk.length; i++) {
       const v = chunk[i];
       ring[(written + i) % ring.length] = v;
@@ -291,8 +318,8 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
         .update(withFastNotes(notes, edge, opts.getExpected(), thresholds.onset), endMs - windowMs)
         .filter((o) => gate.allows(o.time));
       for (const o of found) opts.onHeard(o.midi);
-      judge.judgeBatch(found, opts.getExpected, (midi) =>
-        opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic' }),
+      judge.judgeBatch(found, opts.getExpected, (midi, _verdict, onset) =>
+        opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic', time: onset.time + audioToPerf }),
       );
     } catch (e) {
       console.warn('Basic Pitch 실행 오류, 기본 방식으로 바꿉니다', e);
@@ -319,7 +346,7 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
       window.clearInterval(diagTimer);
       window.clearTimeout(watchdog);
       ctx.onstatechange = null;
-      stream.getTracks().forEach((t) => t.stop());
+      releaseMicStream(stream);
       void ctx.close();
       opts.onLevel(0);
     },

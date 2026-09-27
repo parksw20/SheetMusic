@@ -39,6 +39,8 @@ interface Props {
   /** true면 악보를 드래그해서 반복 구간을 고른다 */
   selecting: boolean;
   onSelectLoop: (range: LoopRange) => void;
+  /** 박자 맞추기·듣기: 이 박 위치에 세로 막대를 그린다 (박 사이는 부드럽게 이어진다) */
+  playhead?: number | null;
 }
 
 const EPS = 1e-6;
@@ -119,6 +121,39 @@ interface MeasureBox {
   staffTop: number[];
 }
 
+/** 박 위치별 x (막대를 부드럽게 움직이는 데 쓴다) */
+interface TimePoint {
+  beat: number;
+  x: number;
+  measure: number;
+}
+
+/** 음표가 놓인 박마다의 x와 마디 끝 x. OSMD 단위는 배율 1에서 10px */
+function timeline(osmd: OpenSheetMusicDisplay, sheetEl: HTMLElement, boxes: MeasureBox[]): TimePoint[] {
+  const svg = sheetEl.querySelector('svg');
+  if (!svg) return [];
+  const ox = svg.getBoundingClientRect().left - sheetEl.getBoundingClientRect().left;
+  const u = 10 * osmd.Zoom;
+  const points = new Map<number, TimePoint>();
+  osmd.GraphicSheet.MeasureList.forEach((staves, i) => {
+    const first = staves.find(Boolean);
+    if (!first) return;
+    const src = first.parentSourceMeasure;
+    const start = src.AbsoluteTimestamp.RealValue * 4;
+    for (const m of staves) {
+      for (const se of m?.staffEntries ?? []) {
+        const beat = Math.round((start + se.relInMeasureTimestamp.RealValue * 4) * 1000) / 1000;
+        const x = ox + se.PositionAndShape.AbsolutePosition.x * u;
+        const old = points.get(beat);
+        if (!old || x < old.x) points.set(beat, { beat, x, measure: i });
+      }
+    }
+    const end = Math.round((start + src.Duration.RealValue * 4) * 1000) / 1000 - 0.0005;
+    points.set(end, { beat: end, x: boxes[i].x + boxes[i].width - 4, measure: i });
+  });
+  return [...points.values()].sort((a, b) => a.beat - b.beat);
+}
+
 /** 마디 위치를 잰다. OSMD 단위는 배율 1에서 10px */
 function measureBoxes(osmd: OpenSheetMusicDisplay, sheetEl: HTMLElement): MeasureBox[] {
   const svg = sheetEl.querySelector('svg');
@@ -162,7 +197,7 @@ interface MarkPos {
 
 /** OpenSheetMusicDisplay로 악보를 그리고, cursorBeat 위치로 커서를 옮긴다. */
 export function ScoreView(props: Props) {
-  const { xml, cursorBeat, markPassed, colorFromBeat, hand, resetKey, fingering, marks, loop, selecting, onSelectLoop } = props;
+  const { xml, cursorBeat, markPassed, colorFromBeat, hand, resetKey, fingering, marks, loop, selecting, onSelectLoop, playhead } = props;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -170,6 +205,7 @@ export function ScoreView(props: Props) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [boxes, setBoxes] = useState<MeasureBox[]>([]);
+  const [points, setPoints] = useState<TimePoint[]>([]);
   /** 커서가 지나간 위치별 x와 마디 (친 음 표시 위치) */
   const beatPos = useRef(new Map<number, { x: number; measure: number }>());
   const [markPos, setMarkPos] = useState<MarkPos[]>([]);
@@ -184,7 +220,11 @@ export function ScoreView(props: Props) {
     if (!el) return;
     renderGrid(osmd, el.offsetWidth, fingeringRef.current);
     beatPos.current.clear();
-    if (sheetRef.current) setBoxes(measureBoxes(osmd, sheetRef.current));
+    if (sheetRef.current) {
+      const b = measureBoxes(osmd, sheetRef.current);
+      setBoxes(b);
+      setPoints(timeline(osmd, sheetRef.current, b));
+    }
   };
 
   // OSMD 인스턴스는 하나만 만든다. 곡마다 새로 만들면 이전 인스턴스의 빈 SVG와
@@ -394,6 +434,18 @@ export function ScoreView(props: Props) {
     if (d) onSelectLoop({ from: Math.min(d.from, d.to), to: Math.max(d.from, d.to) });
   };
 
+ // 박 위치 → 막대 위치 (같은 마디 안에서 앞뒤 음 사이를 비례로)
+  let bar: { x: number; top: number; height: number } | null = null;
+  if (playhead !== null && playhead !== undefined && points.length) {
+    let k = 0;
+    while (k + 1 < points.length && points[k + 1].beat <= playhead) k++;
+    const a = points[k];
+    const b = points[k + 1];
+    const x = b && b.measure === a.measure && b.beat > a.beat ? a.x + ((b.x - a.x) * Math.max(0, playhead - a.beat)) / (b.beat - a.beat) : a.x;
+    const box = boxes[a.measure];
+    if (box) bar = { x, top: box.top, height: box.bottom - box.top };
+  }
+
   const shown = drag ? { from: Math.min(drag.from, drag.to), to: Math.max(drag.from, drag.to) } : loop;
 
   return (
@@ -410,6 +462,7 @@ export function ScoreView(props: Props) {
                 style={{ left: b.x, top: b.top, width: b.width, height: b.bottom - b.top }}
               />
             ))}
+          {bar && <div className="playhead" style={{ left: bar.x, top: bar.top, height: bar.height }} />}
           {markPos.map((m) => (
             <div key={m.id} className={`mark ${m.ok ? 'ok' : 'ng'}`} style={{ left: m.x, top: m.y }}>
               {m.ledgers.map((y, i) => (

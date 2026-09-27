@@ -323,6 +323,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .stat { display: inline-flex; gap: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .stat .ok { color: var(--ok); }
 .stat .ng { color: var(--ng); }
+.stat .miss { color: var(--muted); font-weight: 600; }
+.next.count { min-width: 56px; justify-content: center; background: var(--accent); color: #fff; font-size: 26px; }
+.playhead { position: absolute; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px rgb(91 80 232 / 0.18); z-index: 2; }
 .next {
   display: inline-flex;
   align-items: baseline;
