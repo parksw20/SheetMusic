@@ -41,16 +41,19 @@ interface Props {
   onSelectLoop: (range: LoopRange) => void;
   /** 박자 맞추기·듣기: 이 박 위치에 세로 막대를 그린다 (박 사이는 부드럽게 이어진다) */
   playhead?: number | null;
+  /** 듣기 중: 커서가 지나가는 음을 잠깐 빛나게 하고 지금 마디를 칠한다 */
+  playing?: boolean;
 }
 
 const EPS = 1e-6;
 /** 한 줄에 놓을 마디 수 */
 const MEASURES_PER_LINE = 4;
-const MIN_ZOOM = 0.6;
+const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 2.4;
 /** .score 좌우 안쪽 여백 합 (px). styles.css와 맞춘다 */
 const SCORE_PADDING_PX = 24;
 const HIT_CLASS = 'sm-hit';
+const PLAY_CLASS = 'sm-play';
 /** 드래그하다 위아래 가장자리 이 거리 안에 오면 악보를 스크롤한다 (px) */
 const EDGE_PX = 80;
 
@@ -62,6 +65,9 @@ function staffNumber(g: GraphicalNote): number {
 function setBaseRules(osmd: OpenSheetMusicDisplay, fingering: boolean) {
   const rules = osmd.EngravingRules;
   rules.RenderXMeasuresPerLineAkaSystem = MEASURES_PER_LINE;
+  // 빈 마디가 이어져도 여러 마디 쉼표("2")로 합치지 않는다. 합치면 칸이 빠져 4칸 배치와 박 위치가 깨진다
+  rules.AutoGenerateMultipleRestMeasuresFromRestMeasures = false;
+  rules.RenderMultipleRestMeasures = false;
   rules.FixedMeasureWidth = false;
   rules.StretchLastSystemLine = false;
   // 박자표는 첫 줄에만 붙어 첫 줄만 앞머리가 길어진다. 빼서 모든 줄의 앞머리를 음자리표로 같게 한다
@@ -105,8 +111,8 @@ function renderGrid(osmd: OpenSheetMusicDisplay, containerPx: number, fingering:
   });
 
   sheet.SourceMeasures.forEach((m, i) => (m.WidthFactor = plan.widthFactors[i] ?? 1));
-  // 덜 찬 마지막 줄도 다른 줄과 같은 비율로만 늘려 칸 너비를 맞춘다
-  rules.LastSystemMaxScalingFactor = plan.scale;
+  // 덜 찬 마지막 줄도 다른 줄과 같은 비율로만 늘려 칸 너비를 맞춘다. 꽉 찬 마지막 줄은 다른 줄처럼 폭에 맞춘다
+  rules.LastSystemMaxScalingFactor = measures.length % MEASURES_PER_LINE === 0 ? 100 : plan.scale;
   osmd.Zoom = plan.zoom;
   osmd.render();
 }
@@ -197,7 +203,7 @@ interface MarkPos {
 
 /** OpenSheetMusicDisplay로 악보를 그리고, cursorBeat 위치로 커서를 옮긴다. */
 export function ScoreView(props: Props) {
-  const { xml, cursorBeat, markPassed, colorFromBeat, hand, resetKey, fingering, marks, loop, selecting, onSelectLoop, playhead } = props;
+  const { xml, cursorBeat, markPassed, colorFromBeat, hand, resetKey, fingering, marks, loop, selecting, onSelectLoop, playhead, playing = false } = props;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -239,6 +245,7 @@ export function ScoreView(props: Props) {
       drawComposer: false,
       drawPartNames: false,
       followCursor: true,
+      autoGenerateMultipleRestMeasuresFromRestMeasures: false,
       cursorsOptions: [{ type: 0, color: '#6d63ff', alpha: 0.28, follow: true }],
     });
     return () => {
@@ -309,6 +316,10 @@ export function ScoreView(props: Props) {
     containerRef.current?.querySelectorAll(`.${HIT_CLASS}`).forEach((el) => el.classList.remove(HIT_CLASS));
   }, [resetKey, xml, cursorKey]);
 
+  useEffect(() => {
+    if (playing) containerRef.current?.querySelectorAll(`.${PLAY_CLASS}`).forEach((el) => el.classList.remove(PLAY_CLASS));
+  }, [playing, xml, cursorKey]);
+
   const cursorX = (): number | null => {
     const img = osmdRef.current?.cursor.cursorElement;
     const sheet = sheetRef.current;
@@ -328,18 +339,18 @@ export function ScoreView(props: Props) {
     if (position() > cursorBeat + EPS) cursor.reset();
     remember();
     while (!cursor.Iterator.EndReached && position() < cursorBeat - EPS) {
-      if (markPassed && position() >= colorFromBeat - EPS) {
+      if ((markPassed || playing) && position() >= colorFromBeat - EPS) {
         for (const g of cursor.GNotesUnderCursor()) {
           if (g.sourceNote.isRest()) continue;
           const staff = staffNumber(g);
           if ((hand === 'right' && staff !== 1) || (hand === 'left' && staff !== 2)) continue;
-          (g as GraphicalNote & { getSVGGElement?: () => SVGGElement }).getSVGGElement?.()?.classList.add(HIT_CLASS);
+          (g as GraphicalNote & { getSVGGElement?: () => SVGGElement }).getSVGGElement?.()?.classList.add(playing ? PLAY_CLASS : HIT_CLASS);
         }
       }
       cursor.next();
       remember();
     }
-  }, [cursorBeat, ready, markPassed, colorFromBeat, hand, cursorKey]);
+  }, [cursorBeat, ready, markPassed, playing, colorFromBeat, hand, cursorKey]);
 
   // 친 음 위치: 친 순간의 연습 위치(박)의 x, 음높이에 맞는 오선 위 y
   useLayoutEffect(() => {
@@ -436,6 +447,7 @@ export function ScoreView(props: Props) {
 
  // 박 위치 → 막대 위치 (같은 마디 안에서 앞뒤 음 사이를 비례로)
   let bar: { x: number; top: number; height: number } | null = null;
+  let current: MeasureBox | null = null;
   if (playhead !== null && playhead !== undefined && points.length) {
     let k = 0;
     while (k + 1 < points.length && points[k + 1].beat <= playhead) k++;
@@ -444,6 +456,7 @@ export function ScoreView(props: Props) {
     const x = b && b.measure === a.measure && b.beat > a.beat ? a.x + ((b.x - a.x) * Math.max(0, playhead - a.beat)) / (b.beat - a.beat) : a.x;
     const box = boxes[a.measure];
     if (box) bar = { x, top: box.top, height: box.bottom - box.top };
+    current = box ?? null;
   }
 
   const shown = drag ? { from: Math.min(drag.from, drag.to), to: Math.max(drag.from, drag.to) } : loop;
@@ -462,7 +475,10 @@ export function ScoreView(props: Props) {
                 style={{ left: b.x, top: b.top, width: b.width, height: b.bottom - b.top }}
               />
             ))}
-          {bar && <div className="playhead" style={{ left: bar.x, top: bar.top, height: bar.height }} />}
+          {playing && current && (
+            <div className="play-measure" style={{ left: current.x, top: current.top, width: current.width, height: current.bottom - current.top }} />
+          )}
+          {bar && <div className={`playhead${playing ? ' big' : ''}`} style={{ left: bar.x, top: bar.top, height: bar.height }} />}
           {markPos.map((m) => (
             <div key={m.id} className={`mark ${m.ok ? 'ok' : 'ng'}`} style={{ left: m.x, top: m.y }}>
               {m.ledgers.map((y, i) => (

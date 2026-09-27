@@ -39,6 +39,8 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
   const [title, setTitle] = useState('');
   const [bpm, setBpm] = useState(90);
   const [beats, setBeats] = useState<3 | 4>(4);
+  const [grid, setGrid] = useState<8 | 16>(8);
+  const [simplify, setSimplify] = useState(false);
   /** 잡음 거르기에 쓰는 원래 소리 (AI에 넘기면 옮겨져서 따로 복사해 둔다) */
   const source = useRef<Float32Array | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -213,11 +215,11 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
     if (!notes) return null;
     try {
       const audio = source.current ? { samples: source.current, sampleRate: SAMPLE_RATE } : undefined;
-      return notesToSong(notes, title || '내 악보', bpm, audio, beats);
+      return notesToSong(notes, title || '내 악보', bpm, audio, beats, { grid, simplify });
     } catch {
       return null;
     }
-  }, [notes, title, bpm, beats]);
+  }, [notes, title, bpm, beats, grid, simplify]);
 
   const save = () => {
     if (!result) return;
@@ -442,6 +444,27 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
                 ))}
               </div>
             </div>
+            <div className="row-inline">
+              <span className="muted">박 나누기</span>
+              <div className="seg" role="radiogroup" aria-label="박 나누기">
+                {([8, 16] as const).map((g) => (
+                  <button key={g} role="radio" aria-checked={grid === g} className={grid === g ? 'on' : ''} onClick={() => setGrid(g)}>
+                    {g}분음표까지
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="row-inline">
+              <span className="muted">음</span>
+              <div className="seg" role="radiogroup" aria-label="음">
+                {([false, true] as const).map((v) => (
+                  <button key={String(v)} role="radio" aria-checked={simplify === v} className={simplify === v ? 'on' : ''} onClick={() => setSimplify(v)}>
+                    {v ? '멜로디+베이스' : '모두'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="muted">노래·다른 악기가 섞인 음원이면 '멜로디+베이스'가 더 깔끔해요.</p>
             <p className="muted">
               음 {result.noteCount}개 · {result.song.measures.length}마디 · 첫 음을 첫 박으로 맞췄어요
             </p>

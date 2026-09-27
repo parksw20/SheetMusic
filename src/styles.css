@@ -357,6 +357,11 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .score.selecting { background: #fbfaff; }
 .sheet { position: relative; }
 .score .sm-hit path { fill: var(--ok); stroke: var(--ok); }
+/* 듣기: 지금 울리는 음이 잠깐 보라색으로 빛나고, 지금 마디는 옅게 칠한다 */
+.score .sm-play path { animation: play-note 0.9s ease-out; }
+@keyframes play-note { 0%, 35% { fill: var(--accent); stroke: var(--accent); } 100% { fill: #000; stroke: #000; } }
+.play-measure { position: absolute; background: rgb(91 80 232 / 0.07); border-radius: 6px; z-index: 1; transition: left 0.15s, top 0.15s; }
+.playhead.big { width: 4px; margin-left: -2px; box-shadow: 0 0 0 4px rgb(91 80 232 / 0.2), 0 0 14px rgb(91 80 232 / 0.35); }
 .sheet-overlay { position: absolute; inset: 0; pointer-events: none; }
 .select-layer { position: absolute; inset: 0; touch-action: none; cursor: crosshair; z-index: 3; }
 .loop-box { position: absolute; background: rgb(91 80 232 / 0.09); border: 2px solid rgb(91 80 232 / 0.35); border-radius: 8px; }

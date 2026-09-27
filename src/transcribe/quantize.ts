@@ -15,6 +15,15 @@ export interface DetectedNote {
   startTimeSeconds: number;
   durationSeconds: number;
   amplitude: number;
+  /** 시작 부분 음높이 흔들림 (반음). 목소리·비브라토는 크고 피아노는 거의 0 */
+  wobble?: number;
+}
+
+export interface QuantizeOptions {
+  /** 박자 격자: 8이면 8분음표, 16이면 16분음표까지 적는다 */
+  grid?: 8 | 16;
+  /** 오른손은 가장 높은 음(멜로디), 왼손은 가장 낮은 음(베이스)만 남긴다 */
+  simplify?: boolean;
 }
 
 export interface QuantizeResult {
@@ -55,10 +64,19 @@ const HARMONICS = [12, 24];
 const HARMONIC_RATIO = 0.6;
 /** 배경 소음보다 이만큼(dB) 큰 순간에 시작한 음만 인정한다 */
 const NOISE_MARGIN_DB = 12;
+/** 시작 부분 음높이가 이만큼(반음) 넘게 흔들리면 피아노가 아닌 소리(목소리 등)로 본다 */
+const MAX_WOBBLE = 0.6;
 
 export function clean(notes: DetectedNote[]): DetectedNote[] {
   const kept = notes
-    .filter((n) => n.amplitude >= MIN_AMPLITUDE && n.durationSeconds >= MIN_DURATION && n.pitchMidi >= 21 && n.pitchMidi <= 108)
+    .filter(
+      (n) =>
+        n.amplitude >= MIN_AMPLITUDE &&
+        n.durationSeconds >= MIN_DURATION &&
+        n.pitchMidi >= 21 &&
+        n.pitchMidi <= 108 &&
+        (n.wobble ?? 0) < MAX_WOBBLE,
+    )
     .sort((a, b) => a.startTimeSeconds - b.startTimeSeconds);
   return kept.filter(
     (n) =>
@@ -247,6 +265,8 @@ function fitSixteenth(times: number[], slots: number[]): number | null {
 /**
  * 찾은 음들을 곡(SongSpec)으로. bpm을 주면 그 빠르기로 박을 나눈다.
  * audio(22,050Hz)를 주면 배경 소음 크기로 잡음 음을 먼저 거른다.
+ * 8분음표 격자(기본)에서는 서로 다른 타건이 같은 칸에 떨어지면 화음으로 합치지 않고 센 쪽만 남긴다
+ * (빠른 꾸밈음·잔음이 두꺼운 화음이 되어 마디가 넘치는 것을 막는다).
  */
 export function notesToSong(
   raw: DetectedNote[],
@@ -255,7 +275,11 @@ export function notesToSong(
   audio?: { samples: Float32Array; sampleRate: number },
   /** 한 마디 박 수 (4/4 또는 3/4) */
   beats: 3 | 4 = 4,
+  options: QuantizeOptions = {},
 ): QuantizeResult {
+  const { grid = 8, simplify = false } = options;
+  /** 한 칸(16분음표) 단위로 본 격자 간격 */
+  const unit = grid === 8 ? 2 : 1;
   const SLOTS = beats * 4;
   const gated = audio ? gateByLevel(raw, audio.samples, audio.sampleRate) : raw;
   const notes = clean(gated);
@@ -272,43 +296,48 @@ export function notesToSong(
       slots = assignSlots(times, 60 / bpm / 4);
     }
   }
-  const slotOf = (t: number) => {
+  const onsetOf = (t: number) => {
     let k = 0;
     while (k + 1 < times.length && times[k + 1] <= t + 1e-9) k++;
-    return slots[k];
+    return k;
   };
   const key = estimateKey(notes);
   const flats = key < 0;
 
-  const byHand: Record<'rh' | 'lh', Map<number, { pitches: Map<number, number>; length: number }>> = {
-    rh: new Map(),
-    lh: new Map(),
-  };
+  /** 손 → 칸 → 타건 묶음 번호 → 음 */
+  type Group = { pitches: Map<number, number>; length: number; loud: number };
+  const byHand: Record<'rh' | 'lh', Map<number, Map<number, Group>>> = { rh: new Map(), lh: new Map() };
   const sixteenth = 60 / bpm / 4;
   for (const n of notes) {
-    const slot = slotOf(n.startTimeSeconds);
+    const k = onsetOf(n.startTimeSeconds);
+    const slot = Math.round(slots[k] / unit) * unit;
     if (slot >= MAX_MEASURES * SLOTS) break;
     const hand = n.pitchMidi >= SPLIT_MIDI ? 'rh' : 'lh';
-    const length = Math.max(1, Math.round(n.durationSeconds / sixteenth));
-    const ev = byHand[hand].get(slot) ?? { pitches: new Map<number, number>(), length: 0 };
-    ev.pitches.set(n.pitchMidi, Math.max(ev.pitches.get(n.pitchMidi) ?? 0, n.amplitude));
-    ev.length = Math.max(ev.length, length);
-    byHand[hand].set(slot, ev);
+    const length = Math.max(unit, Math.round(n.durationSeconds / sixteenth / unit) * unit);
+    const groups = byHand[hand].get(slot) ?? new Map<number, Group>();
+    const g = groups.get(k) ?? { pitches: new Map<number, number>(), length: 0, loud: 0 };
+    g.pitches.set(n.pitchMidi, Math.max(g.pitches.get(n.pitchMidi) ?? 0, n.amplitude));
+    g.length = Math.max(g.length, length);
+    g.loud = Math.max(g.loud, n.amplitude);
+    groups.set(k, g);
+    byHand[hand].set(slot, groups);
   }
-  const toEvents = (map: Map<number, { pitches: Map<number, number>; length: number }>): Event[] =>
+  const toEvents = (map: Map<number, Map<number, Group>>, hand: 'rh' | 'lh'): Event[] =>
     [...map.entries()]
       .sort(([a], [b]) => a - b)
-      .map(([slot, ev]) => ({
-        slot,
-        length: ev.length,
+      .map(([slot, groups]) => {
+        // 같은 칸에 떨어진 타건 중 가장 센 것 (16분음표 격자에서는 칸마다 하나뿐이다)
+        const ev = [...groups.values()].reduce((a, b) => (b.loud > a.loud ? b : a));
         // 화음이 너무 두꺼우면 센 음 위주로 남긴다
-        pitches: [...ev.pitches.entries()]
+        let pitches = [...ev.pitches.entries()]
           .sort((a, b) => b[1] - a[1])
           .slice(0, MAX_CHORD)
-          .map(([p]) => p),
-      }));
-  const rh = toEvents(byHand.rh);
-  const lh = toEvents(byHand.lh);
+          .map(([p]) => p);
+        if (simplify) pitches = [hand === 'rh' ? Math.max(...pitches) : Math.min(...pitches)];
+        return { slot, length: ev.length, pitches };
+      });
+  const rh = toEvents(byHand.rh, 'rh');
+  const lh = toEvents(byHand.lh, 'lh');
   const lastSlot = Math.max(...[...rh, ...lh].map((e) => e.slot + 1));
   const measures = Math.min(MAX_MEASURES, Math.max(1, Math.ceil(lastSlot / SLOTS)));
   const right = handLines(rh, measures, flats, SLOTS);
@@ -318,6 +347,6 @@ export function notesToSong(
   return {
     song: { title, composer: '음원으로 만든 악보', tempo: Math.round(bpm), key, time: [beats, 4], measures: songMeasures },
     bpm: Math.round(bpm),
-    noteCount: notes.length,
+    noteCount: rh.reduce((a, e) => a + e.pitches.length, 0) + lh.reduce((a, e) => a + e.pitches.length, 0),
   };
 }
