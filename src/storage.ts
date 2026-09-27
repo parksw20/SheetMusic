@@ -44,6 +44,8 @@ export interface Settings {
   mirrorLeftHand: boolean;
   /** 연습 중 다음에 칠 음 이름 보기 */
   showHint: boolean;
+  /** 마이크가 들은 음 이름을 위쪽 마이크 표시에 보기 */
+  showHeard: boolean;
   /** 마이크 진단 줄 보기 */
   showDiagnostics: boolean;
   /** MIDI 건반으로 친 음을 스피커로도 내기 */
@@ -58,6 +60,7 @@ const DEFAULT_SETTINGS: Settings = {
   fingering: true,
   mirrorLeftHand: false,
   showHint: true,
+  showHeard: false,
   showDiagnostics: false,
   soundForMidi: false,
 };

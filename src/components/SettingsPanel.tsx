@@ -110,6 +110,12 @@ export function SettingsPanel({ settings, onChange, onClose, onTranscribe, onImp
             />
           </div>
           <Toggle
+            label="들린 음 이름 보기"
+            hint="위쪽 마이크 표시에 방금 들린 음을 보여 줘요 (말소리도 보여서 꺼 두는 게 편해요)"
+            checked={settings.showHeard}
+            onChange={(v) => set('showHeard', v)}
+          />
+          <Toggle
             label="진단 정보 보기"
             hint="인식이 안 될 때 원인을 찾는 데 써요"
             checked={settings.showDiagnostics}

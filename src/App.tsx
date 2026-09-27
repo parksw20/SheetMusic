@@ -281,7 +281,7 @@ export default function App() {
               title={micError ?? '마이크'}
             >
               <span className="dot" />
-              {listening && heard !== null ? `${MIC_TEXT[micState]} · ${heardName(heard)}` : MIC_TEXT[micState]}
+              {listening && settings.showHeard && heard !== null ? `${MIC_TEXT[micState]} · ${heardName(heard)}` : MIC_TEXT[micState]}
               {listening && (
                 <span className="level">
                   <span ref={micLevelRef} />
