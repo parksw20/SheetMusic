@@ -3,6 +3,7 @@ import { ensureAudio, noteOff, noteOn, playClicks, playNotes } from '../audio/sy
 import { createPractice, currentStep, isFinished, pressKey, summarize, type PracticeState } from '../engine/practice';
 import { RhythmSession, type RhythmResult } from '../engine/rhythm';
 import type { NoteInput } from '../input/types';
+import { mirrorLeftFingering } from '../score/fingering';
 import { buildSteps, filterByHand, midiToName, midiToSolfege, type NoteEvent, type Score, type Staff, type Step } from '../score/model';
 import type { PracticeStyle, Settings } from '../storage';
 import { ResultPanel } from './ResultPanel';
@@ -88,6 +89,7 @@ export function PlayScreen({ xml, score, settings, onSettings, bridge, onFinishe
   const steps = useMemo(() => buildSteps(rangeNotes), [rangeNotes]);
   const rangeStart = loop ? (steps[0]?.startBeat ?? 0) : 0;
   const bpm = (score.bpm * tempo) / 100;
+  const shownXml = useMemo(() => (settings.mirrorLeftHand ? mirrorLeftFingering(xml) : xml), [xml, settings.mirrorLeftHand]);
 
   const stopRhythm = () => {
     window.clearTimeout(rafRef.current);
@@ -437,7 +439,7 @@ export function PlayScreen({ xml, score, settings, onSettings, bridge, onFinishe
       {diagnostics && <p className="diag">{diagnostics}</p>}
 
       <ScoreView
-        xml={xml}
+        xml={shownXml}
         cursorBeat={cursorBeat}
         markPassed={practicing}
         colorFromBeat={rangeStart}

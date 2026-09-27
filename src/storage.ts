@@ -40,6 +40,8 @@ export interface Settings {
   sensitivity: Sensitivity;
   /** 악보에 손가락 번호 보기 */
   fingering: boolean;
+  /** 왼손 번호를 오른손처럼 낮은 음부터 1로 (도1·솔5). 기본은 표준(엄지 1, 도5·솔1) */
+  mirrorLeftHand: boolean;
   /** 연습 중 다음에 칠 음 이름 보기 */
   showHint: boolean;
   /** 마이크 진단 줄 보기 */
@@ -54,6 +56,7 @@ const DEFAULT_SETTINGS: Settings = {
   practiceStyle: 'wait',
   sensitivity: 'normal',
   fingering: true,
+  mirrorLeftHand: false,
   showHint: true,
   showDiagnostics: false,
   soundForMidi: false,
