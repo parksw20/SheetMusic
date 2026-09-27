@@ -462,6 +462,12 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .working .progress { max-width: none; }
 .actions { display: flex; gap: 10px; justify-content: flex-end; }
 .row-inline { display: flex; align-items: center; gap: 12px; }
+.tip { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 14px; color: var(--accent-ink); }
+.tip summary { font-weight: 700; cursor: pointer; }
+.tip p, .tip ol { margin: 8px 0; line-height: 1.5; color: var(--ink-2); }
+.tip ol { padding-left: 20px; }
+.preview { width: 100%; }
+.file-name { display: flex; align-items: baseline; gap: 6px; word-break: break-all; }
 
 /* 결과 */
 .overlay {
