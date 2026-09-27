@@ -99,6 +99,42 @@ export interface Transcriber {
   backend: string;
   /** 모델 입력 길이 (샘플 수, 22,050Hz) */
   window: number;
+  /** 긴 음원 전체를 악보용으로 옮긴다 (음원으로 악보 만들기) */
+  transcribe: (audio22k: Float32Array, onProgress: (percent: number) => void) => Promise<FullNote[]>;
+}
+
+/** 음원 전체에서 찾은 음 (초 단위) */
+export interface FullNote {
+  pitchMidi: number;
+  startTimeSeconds: number;
+  durationSeconds: number;
+  amplitude: number;
+}
+
+/**
+ * 음원 전체를 공식 방식 그대로 분석한다: BasicPitch.evaluateModel(2초 창을 겹쳐 가며) →
+ * outputToNotesPoly → noteFramesToTime. 공식 2초 모델을 따로 불러 쓴다(실시간 인식은 1.5초로 바꾼 모델).
+ */
+async function transcribeWith(model: Promise<GraphModel>, audio: Float32Array, onProgress: (p: number) => void): Promise<FullNote[]> {
+  const { BasicPitch, outputToNotesPoly, noteFramesToTime } = await import('@spotify/basic-pitch');
+  const bp = new BasicPitch(model);
+  const frames: number[][] = [];
+  const onsets: number[][] = [];
+  await bp.evaluateModel(
+    audio,
+    (f, o) => {
+      frames.push(...f);
+      onsets.push(...o);
+    },
+    onProgress,
+  );
+  // 공식 데모 기본값(타건 0.5, 지속 0.3)에 짧은 잡음 음을 줄이려고 최소 길이만 8프레임(약 0.09초)으로
+  return noteFramesToTime(outputToNotesPoly(frames, onsets, 0.5, 0.3, 8)).map((n) => ({
+    pitchMidi: n.pitchMidi,
+    startTimeSeconds: n.startTimeSeconds,
+    durationSeconds: n.durationSeconds,
+    amplitude: n.amplitude,
+  }));
 }
 
 type Tf = typeof import('@tensorflow/tfjs');
@@ -226,10 +262,15 @@ export async function createTranscriber(modelUrl: string): Promise<Transcriber> 
     }
   };
   const label = (name: string) => (name === 'wasm' && wasmThreads() > 1 ? `wasm×${wasmThreads()}` : name);
+  let official: Promise<GraphModel> | null = null;
   const done = (name: string, loaded: Loaded): Transcriber => ({
     analyze: (audio22k, onsetThreshold) => analyzeWith(loaded.model, audio22k, onsetThreshold),
     backend: label(name),
     window: loaded.window,
+    transcribe: (audio22k, onProgress) => {
+      official ??= tf.loadGraphModel(modelUrl);
+      return transcribeWith(official, audio22k, onProgress);
+    },
   });
 
   if (await use('wasm')) {

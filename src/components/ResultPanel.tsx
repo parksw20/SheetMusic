@@ -35,10 +35,12 @@ export function ResultPanel({ result, onRetry, onClose }: Props) {
           <dd>{result.seconds}초</dd>
         </dl>
         <div className="actions">
-          <button className="primary" onClick={onRetry}>
+          <button className="btn primary" onClick={onRetry}>
             다시 하기
           </button>
-          <button onClick={onClose}>닫기</button>
+          <button className="btn" onClick={onClose}>
+            닫기
+          </button>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import type { WorkerRequest, WorkerResponse } from './aiWorker';
-import { createTranscriber, type EdgeOnset, type Transcriber } from './basicPitch';
+import { createTranscriber, type EdgeOnset, type FullNote, type Transcriber } from './basicPitch';
 import type { TranscribedNote } from './onsets';
 
 export interface AiAnalysis {
@@ -16,6 +16,8 @@ export interface AiTranscriber {
   backend: string;
   /** 모델 입력 길이 (샘플 수, 22,050Hz) */
   window: number;
+  /** 긴 음원 전체를 악보용으로 옮긴다. audio는 Worker로 넘겨서 이후에 쓸 수 없다 */
+  transcribe: (audio22k: Float32Array, onProgress: (percent: number) => void) => Promise<FullNote[]>;
 }
 
 let loading: Promise<AiTranscriber> | null = null;
@@ -40,15 +42,26 @@ export function preloadAi(modelUrl: string): Promise<AiTranscriber> {
 }
 
 function toAi(t: Transcriber): AiTranscriber {
-  return { analyze: t.analyze, backend: t.backend, window: t.window, inWorker: false };
+  return { analyze: t.analyze, transcribe: t.transcribe, backend: t.backend, window: t.window, inWorker: false };
+}
+
+interface Pending {
+  resolve: (value: never) => void;
+  reject: (e: Error) => void;
+  progress?: (percent: number) => void;
 }
 
 function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./aiWorker.ts', import.meta.url), { type: 'module' });
-    const pending = new Map<number, { resolve: (a: AiAnalysis) => void; reject: (e: Error) => void }>();
+    const pending = new Map<number, Pending>();
     let nextId = 1;
     let ready = false;
+    const request = <T>(msg: WorkerRequest & { id: number }, transfer: Transferable[], progress?: (p: number) => void) =>
+      new Promise<T>((res, rej) => {
+        pending.set(msg.id, { resolve: res as (v: never) => void, reject: rej, progress });
+        worker.postMessage(msg, transfer);
+      });
 
     worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
       const m = e.data;
@@ -59,15 +72,17 @@ function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
           window: m.window,
           inWorker: true,
           analyze: (audio, onsetThreshold) =>
-            new Promise((res, rej) => {
-              const id = nextId++;
-              pending.set(id, { resolve: res, reject: rej });
-              const msg: WorkerRequest = { type: 'run', id, audio, onsetThreshold };
-              worker.postMessage(msg, [audio.buffer]);
-            }),
+            request<AiAnalysis>({ type: 'run', id: nextId++, audio, onsetThreshold }, [audio.buffer]),
+          transcribe: (audio, onProgress) =>
+            request<FullNote[]>({ type: 'transcribe', id: nextId++, audio }, [audio.buffer], onProgress),
         });
+      } else if (m.type === 'progress') {
+        pending.get(m.id)?.progress?.(m.percent);
       } else if (m.type === 'result') {
-        pending.get(m.id)?.resolve({ notes: m.notes, edge: m.edge });
+        pending.get(m.id)?.resolve({ notes: m.notes, edge: m.edge } as never);
+        pending.delete(m.id);
+      } else if (m.type === 'transcribed') {
+        pending.get(m.id)?.resolve(m.notes as never);
         pending.delete(m.id);
       } else if (m.id !== undefined) {
         pending.get(m.id)?.reject(new Error(m.message));

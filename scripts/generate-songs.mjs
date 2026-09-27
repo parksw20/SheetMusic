@@ -1,4 +1,5 @@
-// 간단한 텍스트 표기법으로 적은 곡을 MusicXML(피아노 큰보표)로 변환한다.
+// 간단한 텍스트 표기법으로 적은 곡을 MusicXML(피아노 큰보표)로 변환한다. 손가락 번호도 자동으로 붙인다.
+// 변환은 src/score/buildMusicXml.ts (Node 22가 TypeScript 타입을 지우고 바로 읽는다)
 // 사용법: npm run songs
 //
 // 곡 정보: level(1 입문, 2 초급, 3 중급), key(조표의 샵 개수, 플랫은 음수), time([박자 수, 박 단위])
@@ -9,12 +10,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { songXml } from '../src/score/buildMusicXml.ts';
 import { LEVEL1 } from './songs/level1.mjs';
 import { LEVEL2 } from './songs/level2.mjs';
 import { LEVEL3 } from './songs/level3.mjs';
 
-const DIVISIONS = 4; // 4분음표 하나 = 4 divisions
-const TYPES = { w: ['whole', 16], h: ['half', 8], q: ['quarter', 4], e: ['eighth', 2], s: ['16th', 1] };
 
 const LEVELS = { 1: '입문', 2: '초급', 3: '중급' };
 
@@ -167,84 +167,6 @@ const seen = new Set();
 for (const s of SONGS) {
   if (seen.has(s.file)) throw new Error(`파일 이름 중복: ${s.file}`);
   seen.add(s.file);
-}
-
-function parsePitch(text) {
-  const m = /^([A-G])(#|b)?(-?\d)$/.exec(text);
-  if (!m) throw new Error(`잘못된 음 표기: ${text}`);
-  const alter = m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0;
-  return { step: m[1], alter, octave: Number(m[3]) };
-}
-
-function noteXml(token, staff, voice) {
-  const [pitchPart, durPart] = token.split(':');
-  const dotted = durPart.endsWith('.');
-  const [type, base] = TYPES[dotted ? durPart.slice(0, -1) : durPart] ?? [];
-  if (!type) throw new Error(`잘못된 길이 표기: ${token}`);
-  const duration = dotted ? base * 1.5 : base;
-  const tail = `<duration>${duration}</duration><voice>${voice}</voice><type>${type}</type>${dotted ? '<dot/>' : ''}<staff>${staff}</staff>`;
-
-  if (pitchPart === 'r') {
-    const whole = durPart === 'w' ? ' measure="yes"' : '';
-    return { xml: `<note><rest${whole}/>${tail}</note>`, duration };
-  }
-  const xml = pitchPart
-    .split('+')
-    .map((p, i) => {
-      const { step, alter, octave } = parsePitch(p);
-      const alterXml = alter ? `<alter>${alter}</alter>` : '';
-      return `<note>${i > 0 ? '<chord/>' : ''}<pitch><step>${step}</step>${alterXml}<octave>${octave}</octave></pitch>${tail}</note>`;
-    })
-    .join('');
-  return { xml, duration };
-}
-
-function staffXml(line, staff, voice) {
-  let total = 0;
-  const xml = line
-    .trim()
-    .split(/\s+/)
-    .map((tok) => {
-      const n = noteXml(tok, staff, voice);
-      total += n.duration;
-      return n.xml;
-    })
-    .join('');
-  return { xml, total };
-}
-
-function songXml(song) {
-  const measures = song.measures
-    .map((m, i) => {
-      const rh = staffXml(m.rh, 1, 1);
-      const lh = staffXml(m.lh, 2, 5);
-      const [beats, beatType] = song.time ?? [4, 4];
-      const measureLength = (beats * 16) / beatType;
-      if (rh.total !== measureLength || lh.total !== measureLength) {
-        throw new Error(`${song.title} ${i + 1}마디: 길이가 박자와 다름 (오른손 ${rh.total}, 왼손 ${lh.total}, 기대 ${measureLength})`);
-      }
-      const attrs =
-        i === 0
-          ? `<attributes><divisions>${DIVISIONS}</divisions><key><fifths>${song.key ?? 0}</fifths></key>` +
-            `<time><beats>${beats}</beats><beat-type>${beatType}</beat-type></time><staves>2</staves>` +
-            `<clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>` +
-            `<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${song.tempo}</per-minute></metronome></direction-type><sound tempo="${song.tempo}"/></direction>`
-          : '';
-      return `<measure number="${i + 1}">${attrs}${rh.xml}<backup><duration>${rh.total}</duration></backup>${lh.xml}</measure>`;
-    })
-    .join('\n');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
-<score-partwise version="4.0">
-<work><work-title>${song.title}</work-title></work>
-<identification><creator type="composer">${song.composer}</creator></identification>
-<part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
-<part id="P1">
-${measures}
-</part>
-</score-partwise>
-`;
 }
 
 const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'songs');
