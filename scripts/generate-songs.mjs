@@ -9,6 +9,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LEVEL1 } from './songs/level1.mjs';
+import { LEVEL2 } from './songs/level2.mjs';
+import { LEVEL3 } from './songs/level3.mjs';
 
 const DIVISIONS = 4; // 4분음표 하나 = 4 divisions
 const TYPES = { w: ['whole', 16], h: ['half', 8], q: ['quarter', 4], e: ['eighth', 2], s: ['16th', 1] };
@@ -33,7 +36,7 @@ const MINUET_A = [
   { rh: 'B4:q C5:e B4:e A4:e G4:e', lh: 'G3:h.' },
 ];
 
-const SONGS = [
+const BASE_SONGS = [
   // ── 입문: 오른손만, 도~솔 다섯 음 ──
   {
     file: 'c-position.musicxml',
@@ -157,6 +160,14 @@ const SONGS = [
     ],
   },
 ];
+
+// 기존 곡 + 난이도별 추가 곡 (scripts/songs/). 같은 난이도끼리 모은다
+const SONGS = [1, 2, 3].flatMap((level) => [...BASE_SONGS, ...LEVEL1, ...LEVEL2, ...LEVEL3].filter((s) => s.level === level));
+const seen = new Set();
+for (const s of SONGS) {
+  if (seen.has(s.file)) throw new Error(`파일 이름 중복: ${s.file}`);
+  seen.add(s.file);
+}
 
 function parsePitch(text) {
   const m = /^([A-G])(#|b)?(-?\d)$/.exec(text);
