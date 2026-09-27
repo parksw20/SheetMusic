@@ -1,4 +1,11 @@
 import type { MySong } from './storage';
+import { CURRENT } from './version';
+
+/**
+ * 곡 목록과 악보 파일 주소. GitHub Pages는 브라우저가 파일을 10분까지 그대로 쓰게 해서,
+ * 새로 배포해도 예전 곡 목록이 보일 수 있다. 빌드마다 다른 값을 붙여 항상 이번 배포의 파일을 받는다.
+ */
+const songUrl = (name: string) => `${import.meta.env.BASE_URL}songs/${name}?v=${CURRENT.commit}`;
 
 export interface SongEntry {
   /** 곡을 구분하는 키 (내장 곡은 파일 이름, 내 악보는 'my:' + id) */
@@ -26,7 +33,7 @@ interface IndexEntry {
 }
 
 export async function fetchBuiltinSongs(): Promise<SongEntry[]> {
-  const r = await fetch(`${import.meta.env.BASE_URL}songs/index.json`);
+  const r = await fetch(songUrl('index.json'), { cache: 'no-cache' });
   const list = (await r.json()) as IndexEntry[];
   return list.map((s) => ({ ...s, key: s.file }));
 }
@@ -44,7 +51,7 @@ export function mySongEntries(songs: MySong[]): SongEntry[] {
 
 export async function loadSongXml(song: SongEntry): Promise<string> {
   if (song.xml) return song.xml;
-  const r = await fetch(`${import.meta.env.BASE_URL}songs/${song.file}`);
+  const r = await fetch(songUrl(song.file!));
   if (!r.ok) throw new Error('악보를 불러오지 못했습니다.');
   return r.text();
 }
