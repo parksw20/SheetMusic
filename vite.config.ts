@@ -24,9 +24,30 @@ const versionFile: Plugin = {
   },
 };
 
+/**
+ * TensorFlow.js WebAssembly 멀티스레드 수정.
+ * tfjs는 모델 실행 함수를 문자열로 바꿔(toString) 보조 스레드(Worker)에 넘긴다. 이 함수는 바깥의 _scriptDir 변수를
+ * 쓰는데, 압축(minify)하면 이름이 바뀌어(e 등) 보조 스레드에서 "e is not defined"로 죽는다.
+ * _scriptDir을 함수 안에서 선언해 문자열만으로도 돌게 한다. 브라우저에서는 어차피 undefined라 동작은 같다.
+ */
+const tfjsWasmThreadsFix: Plugin = {
+  name: 'tfjs-wasm-threads-fix',
+  transform(code, id) {
+    if (!id.includes('tfjs-backend-wasm-threaded-simd.js')) return null;
+    const head = 'function(WasmBackendModuleThreadedSimd) {\n';
+    if (!code.includes(head)) this.error('tfjs-backend-wasm 구조가 바뀌었습니다: tfjsWasmThreadsFix를 확인하세요');
+    return code.replace(
+      head,
+      head + "  var _scriptDir = typeof document !== 'undefined' && document.currentScript ? document.currentScript.src : undefined;\n",
+    );
+  },
+};
+
 export default defineConfig(({ mode }) => ({
   // iPad에서 마이크를 쓰려면 HTTPS가 필요하다: npm run dev:ipad
-  plugins: [react(), versionFile, mode === 'ipad' && basicSsl()],
+  plugins: [react(), versionFile, tfjsWasmThreadsFix, mode === 'ipad' && basicSsl()],
+  // AI 인식은 Web Worker(aiWorker.ts)에서 돌아서 Worker 번들에도 넣는다
+  worker: { format: 'es', plugins: () => [tfjsWasmThreadsFix] },
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __APP_COMMIT__: JSON.stringify(commit),

@@ -1,14 +1,14 @@
 import { preferPlayAndRecord, preferPlayback } from '../audio/session';
 import { preloadAi, type AiTranscriber } from './aiClient';
-import { BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW } from './basicPitch';
-import { NoteTracker, OnsetJudge, withFastNotes } from './onsets';
+import { BASIC_PITCH_SAMPLE_RATE } from './basicPitch';
+import { LEVEL_BLOCK_MS, LevelGate, NoteTracker, OnsetJudge, withFastNotes } from './onsets';
 import { NoteVerifier, type Sensitivity } from './pitch';
 import { resampleTail } from './resample';
 import type { NoteListener } from './types';
 
 /**
  * loading: AI 모델을 불러오는 중 (그동안 기본 방식으로 판정)
- * warming: 모델 준비 완료, 소리를 2초 모으는 중
+ * warming: 모델 준비 완료, 소리를 1.5초 모으는 중
  * ai: AI(Basic Pitch)로 판정 중
  * basic: AI를 쓸 수 없어 기본(스펙트럼) 방식으로 판정 중
  */
@@ -150,8 +150,22 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   // 최근 3초의 원본 소리
   const ring = new Float32Array(Math.ceil(sr * 3));
   let written = 0;
+  // 배경 소음과 비교하려고 50ms마다 소리 크기를 잰다
+  const gate = new LevelGate();
+  const blockSamples = Math.round((sr * LEVEL_BLOCK_MS) / 1000);
+  let blockSum = 0;
+  let blockCount = 0;
   const push = (chunk: Float32Array) => {
-    for (let i = 0; i < chunk.length; i++) ring[(written + i) % ring.length] = chunk[i];
+    for (let i = 0; i < chunk.length; i++) {
+      const v = chunk[i];
+      ring[(written + i) % ring.length] = v;
+      blockSum += v * v;
+      if (++blockCount === blockSamples) {
+        gate.add(((written + i + 1) / sr) * 1000, 10 * Math.log10(blockSum / blockCount + 1e-12));
+        blockSum = 0;
+        blockCount = 0;
+      }
+    }
     written += chunk.length;
   };
   const recent = (count: number) => {
@@ -224,8 +238,6 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   let transcriber: AiTranscriber | null = null;
   let stopped = false;
   let avgMs = 0;
-  const need = Math.ceil((BASIC_PITCH_WINDOW / BASIC_PITCH_SAMPLE_RATE) * sr) + 2;
-  const windowMs = (BASIC_PITCH_WINDOW / BASIC_PITCH_SAMPLE_RATE) * 1000;
 
   let lastNotes = 0;
   let lastWritten = 0;
@@ -251,6 +263,8 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   let aiTimer = 0;
   const aiStep = async () => {
     if (stopped) return;
+    // 모델 입력 길이만큼의 소리 (원래 샘플레이트 기준, 리샘플 여유 2샘플)
+    const need = transcriber ? Math.ceil((transcriber.window / BASIC_PITCH_SAMPLE_RATE) * sr) + 2 : Infinity;
     if (!transcriber || written < need) {
       aiTimer = window.setTimeout(aiStep, AI_IDLE_MS);
       return;
@@ -258,7 +272,8 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
     const current = transcriber;
     try {
       const endMs = (written / sr) * 1000;
-      const audio = resampleTail(recent(need), sr, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW);
+      const windowMs = (current.window / BASIC_PITCH_SAMPLE_RATE) * 1000;
+      const audio = resampleTail(recent(need), sr, BASIC_PITCH_SAMPLE_RATE, current.window);
       const t0 = performance.now();
       const { notes, edge } = await current.analyze(audio, thresholds.onset);
       if (stopped) return;
@@ -272,7 +287,9 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
         tracker = new NoteTracker(START_IGNORE_MS);
         opts.onStatus('ai');
       }
-      const found = tracker.update(withFastNotes(notes, edge, opts.getExpected(), thresholds.onset), endMs - windowMs);
+      const found = tracker
+        .update(withFastNotes(notes, edge, opts.getExpected(), thresholds.onset), endMs - windowMs)
+        .filter((o) => gate.allows(o.time));
       for (const o of found) opts.onHeard(o.midi);
       judge.judgeBatch(found, opts.getExpected, (midi) =>
         opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic' }),

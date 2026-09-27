@@ -79,6 +79,49 @@ export class NoteTracker {
   }
 }
 
+/** 소리 크기 블록 길이 */
+export const LEVEL_BLOCK_MS = 50;
+/** 배경 소음 기준을 잡는 기간 (쉬지 않고 쳐도 그 사이 가장 조용한 순간이 들어가도록 길게) */
+const FLOOR_HISTORY_MS = 30_000;
+/** 이보다 작은 블록은 소리가 아예 없는 것(수집 시작 전 등)이라 배경 소음 계산에서 뺀다 */
+const DIGITAL_SILENCE_DB = -100;
+/** 들린 음은 배경 소음보다 이만큼(dB) 커야 한다 */
+const FLOOR_MARGIN_DB = 10;
+
+/**
+ * 배경 소음에 가까운 소리에서 나온 음을 버린다.
+ * 모델은 창마다 소리 크기를 맞춰(normalized log) 분석해서, 조용한 방의 잡음만 있는 창에서는 잡음이 크게 부풀려져
+ * 가끔 가짜 타건(타건 확률 0.7 이상)을 만든다. 그 가짜 음이 곧 칠 음과 같으면 먼저 맞음이 되고, 진짜 타건은 틀림이 된다.
+ * 절대 크기로는 거를 수 없어서(조용히 친 음 -32dB < 다른 방의 잡음 -38dB), 최근 30초 중 가장 조용한 순간을
+ * 배경 소음으로 보고 음이 시작된 순간의 소리가 그보다 10dB 이상 클 때만 인정한다.
+ * (하위 10%로 잡으면 빠른 곡을 쉬지 않고 칠 때 기준이 올라가 약하게 친 음을 버렸다)
+ */
+export class LevelGate {
+  private blocks: { time: number; db: number }[] = [];
+
+  /** LEVEL_BLOCK_MS 길이 블록 하나의 크기(dBFS)를 넣는다. time: 블록이 끝나는 오디오 시간(ms) */
+  add(time: number, db: number) {
+    if (db < DIGITAL_SILENCE_DB) return;
+    this.blocks.push({ time, db });
+    while (this.blocks.length && this.blocks[0].time < time - FLOOR_HISTORY_MS) this.blocks.shift();
+  }
+
+  /** 배경 소음 크기 (dBFS) */
+  floor(): number {
+    let min = Infinity;
+    for (const b of this.blocks) min = Math.min(min, b.db);
+    return min === Infinity ? -Infinity : min;
+  }
+
+  /** 이 시간(ms)에 시작된 음이 배경 소음보다 충분히 큰 소리인가 */
+  allows(onsetMs: number): boolean {
+    let peak = -Infinity;
+    for (const b of this.blocks) if (b.time > onsetMs - LEVEL_BLOCK_MS && b.time <= onsetMs + 4 * LEVEL_BLOCK_MS) peak = Math.max(peak, b.db);
+    if (peak === -Infinity) return true; // 소리 크기 정보가 없으면 거르지 않는다
+    return peak >= this.floor() + FLOOR_MARGIN_DB;
+  }
+}
+
 export type Verdict = 'hit' | 'wrong';
 
 /** 맞힌 음과 이 시간 안에 들린 다른 음은 같은 화음이거나 그 배음으로 보고 틀림으로 세지 않는다 */
