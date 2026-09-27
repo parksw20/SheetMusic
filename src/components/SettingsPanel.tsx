@@ -87,6 +87,12 @@ export function SettingsPanel({ settings, onChange, onClose, onTranscribe, onImp
             <Segmented options={HANDS} value={settings.hand} onChange={(v) => set('hand', v)} label="연습할 손" />
           </div>
           <Toggle label="손가락 번호 보기" checked={settings.fingering} onChange={(v) => set('fingering', v)} />
+          <Toggle
+            label="왼손도 낮은 음부터 1번"
+            hint="끄면 표준(엄지 1): 왼손 도 자리는 도 5·솔 1. 켜면 도 1·솔 5"
+            checked={settings.mirrorLeftHand}
+            onChange={(v) => set('mirrorLeftHand', v)}
+          />
           <Toggle label="다음 음 이름 보기" checked={settings.showHint} onChange={(v) => set('showHint', v)} />
         </section>
 

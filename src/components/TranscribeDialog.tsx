@@ -106,6 +106,8 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
       const YT = await loadYouTubeApi();
       player.current?.destroy();
       const host = document.createElement('div');
+      // 유튜브 API가 이 div를 iframe으로 바꾼다. React가 관리하지 않는 칸(yt-host) 안에서만 바꿔야
+      // React가 그리는 안내 글자와 부딪히지 않는다 (부딪히면 화면 전체가 하얗게 됨)
       playerEl.current!.replaceChildren(host);
       player.current = new YT.Player(host, {
         videoId: id,
@@ -255,7 +257,8 @@ export function TranscribeDialog({ initialTab = 'file', onClose, onSave }: Props
                     불러오기
                   </button>
                 </div>
-                <div className={`video${videoId ? '' : ' empty'}`} ref={playerEl}>
+                <div className={`video${videoId ? '' : ' empty'}`}>
+                  <div className="yt-host" ref={playerEl} />
                   {!videoId && <span className="muted">영상을 불러오면 여기에 나와요</span>}
                 </div>
                 {videoId && (

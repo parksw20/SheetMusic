@@ -218,6 +218,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .update { display: flex; align-items: center; justify-content: center; gap: 12px; padding: calc(6px + env(safe-area-inset-top)) 20px 6px; background: #fff4d6; color: #7a4d00; font-weight: 600; font-size: 14px; }
 .banner { padding: 8px 20px; background: var(--ng-soft); }
 .loading { flex: 1; display: grid; place-items: center; color: var(--muted); }
+.crash { flex: 1; display: grid; place-content: center; gap: 12px; padding: 24px; text-align: center; }
+.crash small { color: var(--muted); word-break: break-all; }
 
 /* ── 첫 화면 ── */
 .home {
@@ -450,7 +452,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .field-row.times input { width: 84px; flex: none; text-align: center; font-variant-numeric: tabular-nums; }
 .video { position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: #111; }
 .video.empty { display: grid; place-items: center; background: var(--surface-2); }
-.video iframe, .video > div { position: absolute; inset: 0; width: 100%; height: 100%; }
+.yt-host, .yt-host iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.video.empty .yt-host { display: none; }
 .recording { display: flex; align-items: center; gap: 10px; font-weight: 700; color: #b42328; font-variant-numeric: tabular-nums; }
 .recording .level { color: var(--ng); }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ng); animation: pulse 1s infinite; }
