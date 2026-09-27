@@ -40,6 +40,16 @@ export function ResultPanel({ result, rhythm, onRetry, onClose }: Props) {
               <dd>
                 {rhythm.good} / {rhythm.totalSteps}
               </dd>
+              {rhythm.offsetMs !== null && (
+                <>
+                  <dt>평균 타이밍</dt>
+                  <dd>
+                    {Math.abs(rhythm.offsetMs) < 30
+                      ? '딱 맞음'
+                      : `${(Math.abs(rhythm.offsetMs) / 1000).toFixed(2)}초 ${rhythm.offsetMs > 0 ? '늦게' : '빠르게'}`}
+                  </dd>
+                </>
+              )}
             </>
           ) : (
             <>

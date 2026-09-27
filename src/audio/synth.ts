@@ -104,14 +104,30 @@ export function playbackSeconds(): number | null {
 let clicker: Tone.NoiseSynth | null = null;
 
 /**
- * 박자 맞추기 전에 한 마디를 센다 (딱딱 소리). 음높이가 없는 잡음 소리라 마이크 음 인식에 음으로 잡히지 않는다.
- * delaySec 뒤에 첫 소리, 이후 msPerBeat 간격으로 count번. 첫 소리는 조금 세게.
+ * performance.now 시각(ms)에 스피커에서 소리가 나려면 예약해야 할 오디오 시계 시각(초).
+ * Tone.now()는 미리 예약 여유(lookAhead 0.1초)가 더해져 있고 스피커 출력 지연도 있어서, 그대로 쓰면 소리가 늦게 난다.
  */
-export function playClicks(count: number, msPerBeat: number, delaySec: number): () => void {
+export function audioTimeAt(perfMs: number): number {
+  const raw = Tone.getContext().rawContext as AudioContext;
+  // 지금 스피커로 나가는 오디오 시각과 그 순간의 performance.now (출력 지연 포함)
+  const ts = typeof raw.getOutputTimestamp === 'function' ? raw.getOutputTimestamp() : null;
+  if (ts?.performanceTime && ts.contextTime !== undefined) return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
+  const latency = (raw.outputLatency || raw.baseLatency || 0) as number;
+  return raw.currentTime + (perfMs - performance.now()) / 1000 - latency;
+}
+
+/**
+ * 박자 맞추기 전에 한 마디를 센다 (딱딱 소리). 음높이가 없는 잡음 소리라 마이크 음 인식에 음으로 잡히지 않는다.
+ * firstAt(performance.now 시각, ms)에 첫 소리가 들리고, 이후 msPerBeat 간격으로 count번. 첫 소리는 조금 세게.
+ */
+export function playClicks(count: number, msPerBeat: number, firstAt: number): () => void {
   clicker ??= new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.03, sustain: 0 } }).toDestination();
   clicker.volume.value = -12;
-  const start = Tone.now() + Math.max(0.05, delaySec);
-  for (let i = 0; i < count; i++) clicker.triggerAttackRelease(0.03, start + (i * msPerBeat) / 1000, i === 0 ? 1 : 0.6);
+  const earliest = Tone.getContext().currentTime + 0.02;
+  for (let i = 0; i < count; i++) {
+    const at = audioTimeAt(firstAt + i * msPerBeat);
+    if (at >= earliest) clicker.triggerAttackRelease(0.03, at, i === 0 ? 1 : 0.6);
+  }
   return () => clicker?.triggerRelease();
 }
 

@@ -18,6 +18,8 @@ export type NoteMark = 'hit' | 'good' | 'miss';
 export interface RhythmResult extends PracticeResult {
   missed: number;
   good: number;
+  /** 맞힌 음을 정해진 박보다 평균 몇 ms 늦게 쳤는지 (중앙값, 빠르면 음수). 맞힌 음이 없으면 null */
+  offsetMs: number | null;
 }
 
 export class RhythmSession {
@@ -130,6 +132,7 @@ export class RhythmSession {
       seconds: Math.round((this.endAt - this.startAt) / 1000),
       missed,
       good,
+      offsetMs: this.offsets.length ? Math.round([...this.offsets].sort((a, b) => a - b)[this.offsets.length >> 1]) : null,
     };
   }
 }
