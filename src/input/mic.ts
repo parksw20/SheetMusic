@@ -1,7 +1,7 @@
 import { preferPlayAndRecord, preferPlayback } from '../audio/session';
 import { preloadAi, type AiTranscriber } from './aiClient';
-import { BASIC_PITCH_INPUT_SAMPLES, BASIC_PITCH_SAMPLE_RATE } from './basicPitch';
-import { NoteTracker, OnsetJudge } from './onsets';
+import { BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW } from './basicPitch';
+import { NoteTracker, OnsetJudge, withFastNotes } from './onsets';
 import { NoteVerifier, type Sensitivity } from './pitch';
 import { resampleTail } from './resample';
 import type { NoteListener } from './types';
@@ -56,14 +56,22 @@ export const MODEL_URL = `${import.meta.env.BASE_URL}models/basic-pitch/model.js
 const START_IGNORE_MS = 300;
 /** 이 시간 동안 AudioWorklet으로 소리가 하나도 안 들어오면 ScriptProcessor로 바꾼다 */
 const CAPTURE_WATCHDOG_MS = 1000;
-/** AI 판정 주기. 추론이 이보다 오래 걸리면 자연히 건너뛴다 */
-const AI_INTERVAL_MS = 150;
+/**
+ * AI 판정 사이에 쉬는 시간. Web Worker에서 돌 때는 쉬지 않고 이어서 돌린다(지연이 곧 추론 시간).
+ * 메인 스레드에서 돌 때는 화면과 소리 수집이 끊기지 않게 조금 쉰다.
+ */
+const AI_GAP_WORKER_MS = 0;
+const AI_GAP_MAIN_MS = 100;
+/** 모델이 아직 없거나 소리가 덜 모였을 때 다시 볼 간격 */
+const AI_IDLE_MS = 50;
 
 /**
  * 감도별 AI 기준값.
  *  onset: basic-pitch outputToNotesPoly의 타건 확률 기준 (공식 기본값 0.5).
  *    실제 피아노 녹음에서 타건은 작게 쳐도 0.86 이상이었고, 방 잡음은 여러 건반에 0.5~0.6짜리 가짜 타건을 만든다.
  *  wrong: 기대하지 않은 음을 틀림으로 볼 최소 세기(amplitude)
+ *    창 끝(확정 전) 구간에서 쳐야 할 음을 먼저 맞음으로 볼 때(withFastNotes)도 같은 기준을 쓴다.
+ *    그보다 낮추면 방 잡음이 곧 칠 음을 미리 맞히는 경우가 생겼다.
  */
 const AI_THRESHOLDS: Record<Sensitivity, { onset: number; wrong: number }> = {
   low: { onset: 0.8, wrong: 0.6 },
@@ -214,11 +222,10 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
   const judge = new OnsetJudge(thresholds.wrong);
   let tracker: NoteTracker | null = null;
   let transcriber: AiTranscriber | null = null;
-  let busy = false;
   let stopped = false;
   let avgMs = 0;
-  const need = Math.ceil((BASIC_PITCH_INPUT_SAMPLES / BASIC_PITCH_SAMPLE_RATE) * sr) + 2;
-  const windowMs = (BASIC_PITCH_INPUT_SAMPLES / BASIC_PITCH_SAMPLE_RATE) * 1000;
+  const need = Math.ceil((BASIC_PITCH_WINDOW / BASIC_PITCH_SAMPLE_RATE) * sr) + 2;
+  const windowMs = (BASIC_PITCH_WINDOW / BASIC_PITCH_SAMPLE_RATE) * 1000;
 
   let lastNotes = 0;
   let lastWritten = 0;
@@ -241,18 +248,23 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
     opts.onStatus(t ? 'warming' : 'basic');
   });
 
-  const aiTimer = window.setInterval(async () => {
-    if (!transcriber || busy || written < need) return;
-    busy = true;
+  let aiTimer = 0;
+  const aiStep = async () => {
+    if (stopped) return;
+    if (!transcriber || written < need) {
+      aiTimer = window.setTimeout(aiStep, AI_IDLE_MS);
+      return;
+    }
+    const current = transcriber;
     try {
       const endMs = (written / sr) * 1000;
-      const audio = resampleTail(recent(need), sr, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_INPUT_SAMPLES);
+      const audio = resampleTail(recent(need), sr, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW);
       const t0 = performance.now();
-      const notes = await transcriber.transcribe(audio, thresholds.onset);
+      const { notes, edge } = await current.analyze(audio, thresholds.onset);
       if (stopped) return;
       const ms = performance.now() - t0;
       avgMs = avgMs ? avgMs * 0.8 + ms * 0.2 : ms;
-      opts.onInferenceMs?.(avgMs, transcriber.backend);
+      opts.onInferenceMs?.(avgMs, current.backend);
       lastNotes = notes.length;
       if (!tracker) {
         // 창이 처음 찬 시점: 마이크를 켠 순간의 잡음만 빼고 바로 판정을 시작한다
@@ -260,7 +272,7 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
         tracker = new NoteTracker(START_IGNORE_MS);
         opts.onStatus('ai');
       }
-      const found = tracker.update(notes, endMs - windowMs);
+      const found = tracker.update(withFastNotes(notes, edge, opts.getExpected(), thresholds.onset), endMs - windowMs);
       for (const o of found) opts.onHeard(o.midi);
       judge.judgeBatch(found, opts.getExpected, (midi) =>
         opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic' }),
@@ -270,10 +282,11 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
       transcriber = null;
       useBasic = true;
       opts.onStatus('basic');
-    } finally {
-      busy = false;
+      return;
     }
-  }, AI_INTERVAL_MS);
+    if (!stopped) aiTimer = window.setTimeout(aiStep, current.inWorker ? AI_GAP_WORKER_MS : AI_GAP_MAIN_MS);
+  };
+  aiTimer = window.setTimeout(aiStep, AI_IDLE_MS);
 
   return {
     setSensitivity: (s) => {
@@ -285,7 +298,7 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
       stopped = true;
       preferPlayback();
       window.clearInterval(basicTimer);
-      window.clearInterval(aiTimer);
+      window.clearTimeout(aiTimer);
       window.clearInterval(diagTimer);
       window.clearTimeout(watchdog);
       ctx.onstatechange = null;

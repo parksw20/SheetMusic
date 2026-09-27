@@ -1,9 +1,17 @@
 import type { WorkerRequest, WorkerResponse } from './aiWorker';
-import { createTranscriber, type Transcriber } from './basicPitch';
+import { createTranscriber, type EdgeOnset, type Transcriber } from './basicPitch';
 import type { TranscribedNote } from './onsets';
 
+export interface AiAnalysis {
+  notes: TranscribedNote[];
+  edge: EdgeOnset[];
+}
+
 export interface AiTranscriber {
-  transcribe: (audio22k: Float32Array, onsetThreshold: number) => Promise<TranscribedNote[]>;
+  /** 22,050Hz 소리 한 창(BASIC_PITCH_WINDOW)을 분석한다. audio는 Worker로 넘겨서 이후에 쓸 수 없다 */
+  analyze: (audio22k: Float32Array, onsetThreshold: number) => Promise<AiAnalysis>;
+  /** Web Worker에서 돌면 true (메인 스레드를 막지 않아 쉬지 않고 돌려도 된다) */
+  inWorker: boolean;
   /** 계산 방식 (wasm, webgl, cpu). Web Worker에서 돌면 앞에 'worker/'가 붙는다 */
   backend: string;
 }
@@ -30,13 +38,13 @@ export function preloadAi(modelUrl: string): Promise<AiTranscriber> {
 }
 
 function toAi(t: Transcriber): AiTranscriber {
-  return { transcribe: t.transcribe, backend: t.backend };
+  return { analyze: t.analyze, backend: t.backend, inWorker: false };
 }
 
 function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./aiWorker.ts', import.meta.url), { type: 'module' });
-    const pending = new Map<number, { resolve: (n: TranscribedNote[]) => void; reject: (e: Error) => void }>();
+    const pending = new Map<number, { resolve: (a: AiAnalysis) => void; reject: (e: Error) => void }>();
     let nextId = 1;
     let ready = false;
 
@@ -46,7 +54,8 @@ function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
         ready = true;
         resolve({
           backend: `worker/${m.backend}`,
-          transcribe: (audio, onsetThreshold) =>
+          inWorker: true,
+          analyze: (audio, onsetThreshold) =>
             new Promise((res, rej) => {
               const id = nextId++;
               pending.set(id, { resolve: res, reject: rej });
@@ -55,7 +64,7 @@ function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
             }),
         });
       } else if (m.type === 'result') {
-        pending.get(m.id)?.resolve(m.notes);
+        pending.get(m.id)?.resolve({ notes: m.notes, edge: m.edge });
         pending.delete(m.id);
       } else if (m.id !== undefined) {
         pending.get(m.id)?.reject(new Error(m.message));

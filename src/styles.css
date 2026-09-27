@@ -105,6 +105,22 @@ select.song { flex: 0 1 360px; min-width: 160px; }
 .meter { width: 80px; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: var(--hit); transition: width 0.05s linear; }
 
+/* 악보 오른쪽 아래 구석에 항상 보이는 버전 표시 */
+.version {
+  position: fixed;
+  right: calc(12px + env(safe-area-inset-right));
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.85);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  z-index: 5;
+}
+.update { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 20px; background: #fef3c7; color: #92400e; font-weight: 600; }
+.update button { min-height: 36px; padding: 4px 16px; }
 .diag { margin: 0; padding: 4px 20px; font-size: 13px; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
 .error { color: var(--wrong); padding: 0 20px; }
 
