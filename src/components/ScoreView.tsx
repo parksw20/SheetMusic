@@ -65,6 +65,9 @@ function staffNumber(g: GraphicalNote): number {
 function setBaseRules(osmd: OpenSheetMusicDisplay, fingering: boolean) {
   const rules = osmd.EngravingRules;
   rules.RenderXMeasuresPerLineAkaSystem = MEASURES_PER_LINE;
+  // 빈 마디가 이어져도 여러 마디 쉼표("2")로 합치지 않는다. 합치면 칸이 빠져 4칸 배치와 박 위치가 깨진다
+  rules.AutoGenerateMultipleRestMeasuresFromRestMeasures = false;
+  rules.RenderMultipleRestMeasures = false;
   rules.FixedMeasureWidth = false;
   rules.StretchLastSystemLine = false;
   // 박자표는 첫 줄에만 붙어 첫 줄만 앞머리가 길어진다. 빼서 모든 줄의 앞머리를 음자리표로 같게 한다
@@ -242,6 +245,7 @@ export function ScoreView(props: Props) {
       drawComposer: false,
       drawPartNames: false,
       followCursor: true,
+      autoGenerateMultipleRestMeasuresFromRestMeasures: false,
       cursorsOptions: [{ type: 0, color: '#6d63ff', alpha: 0.28, follow: true }],
     });
     return () => {
