@@ -13,6 +13,26 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#2563eb" />
     <title>SheetMusic 피아노 연습</title>
+    <script>
+      // coi-serviceworker: GitHub Pages는 응답 헤더를 못 바꿔서, 서비스 워커가 COOP/COEP 헤더를 붙여
+      // 교차 출처 격리를 켠다 (WebAssembly 멀티스레드로 음 인식이 빨라짐). 처음 한 번 페이지를 다시 불러온다.
+      // 서비스 워커가 켜진 뒤에 다시 불러오고(그 전에 불러오면 헤더가 안 붙음),
+      // 서비스 워커가 페이지를 맡지 못하는 환경에서 계속 새로고침하지 않도록 한 번만 다시 불러온다.
+      window.coi = {
+        doReload: () =>
+          navigator.serviceWorker.ready.then(() => {
+            try {
+              if (sessionStorage.getItem('coi-reloaded')) return;
+              sessionStorage.setItem('coi-reloaded', '1');
+            } catch {
+              return;
+            }
+            window.location.reload();
+          }),
+        quiet: true,
+      };
+    </script>
+    <script src="./coi-serviceworker.js"></script>
   </head>
   <body>
     <div id="root"></div>

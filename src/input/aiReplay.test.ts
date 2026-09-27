@@ -2,8 +2,8 @@
 // AI_REPLAY_WAV=파일 AI_REPLAY_STEPS='[[60],[62]]' npx vitest run src/input/aiReplay.test.ts
 import { readFileSync, writeFileSync } from 'node:fs';
 import { it } from 'vitest';
-import { analyzeWith, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW } from './basicPitch';
-import { NoteTracker, OnsetJudge, withFastNotes } from './onsets';
+import { analyzeWith, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW, shortModelArtifacts } from './basicPitch';
+import { LEVEL_BLOCK_MS, LevelGate, NoteTracker, OnsetJudge, withFastNotes } from './onsets';
 import { resampleTail } from './resample';
 
 const wavPath = process.env.AI_REPLAY_WAV;
@@ -19,11 +19,7 @@ it.skipIf(!wavPath)(
     const json = JSON.parse(readFileSync('public/models/basic-pitch/model.json', 'utf8'));
     const weights = readFileSync('public/models/basic-pitch/group1-shard1of1.bin');
     const model = await tf.loadGraphModel(
-      tf.io.fromMemory({
-        modelTopology: json.modelTopology,
-        weightSpecs: json.weightsManifest[0].weights,
-        weightData: weights.buffer.slice(weights.byteOffset, weights.byteOffset + weights.byteLength),
-      }),
+      tf.io.fromMemory(shortModelArtifacts(json, weights.buffer.slice(weights.byteOffset, weights.byteOffset + weights.byteLength))),
     );
 
     const buf = readFileSync(wavPath!);
@@ -41,6 +37,16 @@ it.skipIf(!wavPath)(
     const need = Math.ceil((BASIC_PITCH_WINDOW / BASIC_PITCH_SAMPLE_RATE) * sr) + 2;
     const windowMs = (BASIC_PITCH_WINDOW / BASIC_PITCH_SAMPLE_RATE) * 1000;
     const tracker = new NoteTracker((need / sr) * 1000);
+    const gate = new LevelGate();
+    const blk = Math.round((sr * LEVEL_BLOCK_MS) / 1000);
+    let gated = 0;
+    for (let b = blk; b <= n; b += blk) {
+      if (b < need) {
+        let e = 0;
+        for (let i = b - blk; i < b; i++) e += x[i] * x[i];
+        gate.add((b / sr) * 1000, 10 * Math.log10(e / blk + 1e-12));
+      }
+    }
     const judge = new OnsetJudge(wrongThr);
 
     let index = 0;
@@ -53,7 +59,16 @@ it.skipIf(!wavPath)(
       const audio = resampleTail(x.subarray(end - need, end), sr, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW);
       const nowMs = (end / sr) * 1000;
       const { notes, edge } = await analyzeWith(model, audio, onsetThr);
-      const found = tracker.update(withFastNotes(notes, edge, expected(), fastThr), nowMs - windowMs);
+      // 실시간과 같게: 지금(end)까지의 소리 크기만 안다
+      for (let b = Math.floor((end - hop) / blk) * blk + blk; b <= end; b += blk) {
+        if (b < need || b - blk < 0) continue;
+        let e = 0;
+        for (let i = b - blk; i < b; i++) e += x[i] * x[i];
+        gate.add((b / sr) * 1000, 10 * Math.log10(e / blk + 1e-12));
+      }
+      const all = tracker.update(withFastNotes(notes, edge, expected(), fastThr), nowMs - windowMs);
+      const found = all.filter((o) => gate.allows(o.time));
+      for (const o of all) if (!found.includes(o)) { gated++; log.push(`${o.time.toFixed(0)} m${o.midi} a${o.confidence.toFixed(2)} (소음 크기라 버림)`); }
       for (const o of found) log.push(`${o.time.toFixed(0)} (+${(nowMs - o.time).toFixed(0)}ms) m${o.midi} a${o.confidence.toFixed(2)}`);
       judge.judgeBatch(found, expected, (midi, v, o) => {
         log.push(`  → ${v} ${midi} a${o.confidence.toFixed(2)} @${o.time.toFixed(0)} exp[${expected()}]`);
@@ -67,7 +82,7 @@ it.skipIf(!wavPath)(
         } else wrong++;
       });
     }
-    log.push(`RESULT correct ${correct} wrong ${wrong} steps ${index}/${steps.length}`);
+    log.push(`RESULT correct ${correct} wrong ${wrong} steps ${index}/${steps.length} gated ${gated}`);
     writeFileSync(process.env.AI_REPLAY_OUT ?? '/dev/stdout', log.join('\n') + '\n');
   },
   600_000,

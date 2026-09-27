@@ -8,7 +8,7 @@ export type WorkerRequest =
   | { type: 'run'; id: number; audio: Float32Array; onsetThreshold: number };
 
 export type WorkerResponse =
-  | { type: 'ready'; backend: string }
+  | { type: 'ready'; backend: string; window: number }
   | { type: 'error'; message: string; id?: number }
   | { type: 'result'; id: number; notes: { pitchMidi: number; startTimeSeconds: number; amplitude: number }[]; edge: EdgeOnset[] };
 
@@ -20,7 +20,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   if (m.type === 'load') {
     try {
       transcriber ??= createTranscriber(m.modelUrl);
-      post({ type: 'ready', backend: (await transcriber).backend });
+      const t = await transcriber;
+      post({ type: 'ready', backend: t.backend, window: t.window });
     } catch (err) {
       transcriber = null;
       post({ type: 'error', message: String(err) });

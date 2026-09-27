@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NoteTracker, OnsetJudge, withFastNotes } from './onsets';
+import { LevelGate, NoteTracker, OnsetJudge, withFastNotes } from './onsets';
 import { resampleTail } from './resample';
 
 /** basic-pitch 결과 한 개 (창 시작 기준 초) */
@@ -46,6 +46,27 @@ describe('withFastNotes', () => {
     const a = t.update(withFastNotes([], [edge(62, 1.9, 0.8)], [62], 0.55), 2000);
     const b = t.update(withFastNotes([note(62, 1.52)], [], [], 0.55), 2400);
     expect([...a, ...b].map((o) => [o.midi, Math.round(o.time)])).toEqual([[62, 3900]]);
+  });
+});
+
+describe('LevelGate', () => {
+  /** 50ms마다 크기를 넣는다: 조용한 방(-55dB)에서 2초에 피아노(-20dB)를 친다 */
+  function room(noiseDb: number, strikes: number[], strikeDb: number) {
+    const g = new LevelGate();
+    for (let t = 50; t <= 4000; t += 50) g.add(t, strikes.some((s) => t > s && t <= s + 300) ? strikeDb : noiseDb);
+    return g;
+  }
+
+  it('잡음만 있는 순간의 음은 버리고, 친 순간의 음은 인정한다', () => {
+    const g = room(-55, [2000], -20);
+    expect(g.allows(1000)).toBe(false);
+    expect(g.allows(2000)).toBe(true);
+  });
+
+  it('작게 쳐도 배경 소음보다 충분히 크면 인정한다 (절대 크기가 아니라 소음과의 차이로 판단)', () => {
+    expect(room(-65, [2000], -34).allows(2000)).toBe(true);
+    expect(room(-38, [2000], -17).allows(2000)).toBe(true);
+    expect(room(-38, [2000], -17).allows(1000)).toBe(false);
   });
 });
 

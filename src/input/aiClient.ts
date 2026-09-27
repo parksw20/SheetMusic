@@ -8,12 +8,14 @@ export interface AiAnalysis {
 }
 
 export interface AiTranscriber {
-  /** 22,050Hz 소리 한 창(BASIC_PITCH_WINDOW)을 분석한다. audio는 Worker로 넘겨서 이후에 쓸 수 없다 */
+  /** 22,050Hz 소리 한 창(window 샘플)을 분석한다. audio는 Worker로 넘겨서 이후에 쓸 수 없다 */
   analyze: (audio22k: Float32Array, onsetThreshold: number) => Promise<AiAnalysis>;
   /** Web Worker에서 돌면 true (메인 스레드를 막지 않아 쉬지 않고 돌려도 된다) */
   inWorker: boolean;
   /** 계산 방식 (wasm, webgl, cpu). Web Worker에서 돌면 앞에 'worker/'가 붙는다 */
   backend: string;
+  /** 모델 입력 길이 (샘플 수, 22,050Hz) */
+  window: number;
 }
 
 let loading: Promise<AiTranscriber> | null = null;
@@ -38,7 +40,7 @@ export function preloadAi(modelUrl: string): Promise<AiTranscriber> {
 }
 
 function toAi(t: Transcriber): AiTranscriber {
-  return { analyze: t.analyze, backend: t.backend, inWorker: false };
+  return { analyze: t.analyze, backend: t.backend, window: t.window, inWorker: false };
 }
 
 function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
@@ -54,6 +56,7 @@ function loadInWorker(modelUrl: string): Promise<AiTranscriber> {
         ready = true;
         resolve({
           backend: `worker/${m.backend}`,
+          window: m.window,
           inWorker: true,
           analyze: (audio, onsetThreshold) =>
             new Promise((res, rej) => {
