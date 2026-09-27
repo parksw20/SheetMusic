@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { it } from 'vitest';
 import { analyzeWith, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW, shortModelArtifacts } from './basicPitch';
 import { LEVEL_BLOCK_MS, LevelGate, NoteTracker, OnsetJudge, withFastNotes } from './onsets';
+import { isSteady, measureSteadiness, samplesNeeded } from './steadiness';
 import { resampleTail } from './resample';
 
 const wavPath = process.env.AI_REPLAY_WAV;
@@ -47,7 +48,20 @@ it.skipIf(!wavPath)(
         gate.add((b / sr) * 1000, 10 * Math.log10(e / blk + 1e-12));
       }
     }
-    const judge = new OnsetJudge(wrongThr);
+    let written = 0;
+    const span = samplesNeeded(sr);
+    const judge = new OnsetJudge(
+      wrongThr,
+      process.env.AI_NO_STEADY
+        ? undefined
+        : (o) => {
+            const from = Math.round((o.time / 1000) * sr);
+            if (from + span > written) return null;
+            const st = measureSteadiness(x.subarray(from, from + span), sr, o.midi);
+            if (st) log.push(`  steady? m${o.midi} @${o.time.toFixed(0)} drift ${st.driftCents.toFixed(1)}c prom ${st.prominence.toFixed(1)}`);
+            return st ? isSteady(st) : true;
+          },
+    );
 
     let index = 0;
     let hit: number[] = [];
@@ -58,6 +72,7 @@ it.skipIf(!wavPath)(
     for (let end = need; end <= n; end += hop) {
       const audio = resampleTail(x.subarray(end - need, end), sr, BASIC_PITCH_SAMPLE_RATE, BASIC_PITCH_WINDOW);
       const nowMs = (end / sr) * 1000;
+      written = end;
       const { notes, edge } = await analyzeWith(model, audio, onsetThr);
       // 실시간과 같게: 지금(end)까지의 소리 크기만 안다
       for (let b = Math.floor((end - hop) / blk) * blk + blk; b <= end; b += blk) {

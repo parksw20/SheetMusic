@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LevelGate, NoteTracker, OnsetJudge, withFastNotes } from './onsets';
+import { LevelGate, NoteTracker, OnsetJudge, withFastNotes, type NoteOnset } from './onsets';
 import { resampleTail } from './resample';
 
 /** basic-pitch 결과 한 개 (창 시작 기준 초) */
@@ -154,5 +154,22 @@ describe('resampleTail', () => {
     const y = resampleTail(new Float32Array([1, 1, 1, 1]), 22050, 22050, 8);
     expect(Array.from(y.slice(0, 4))).toEqual([0, 0, 0, 0]);
     expect(y[7]).toBeCloseTo(1);
+  });
+});
+
+describe('OnsetJudge 목소리 거르기 (원래 소리 확인)', () => {
+  const onset = (midi: number, time: number): NoteOnset => ({ midi, time, confidence: 0.9 });
+
+  it('음높이가 흔들리는 소리는 틀림으로 세지 않고, 소리가 덜 모였으면 다음 묶음에 다시 본다', () => {
+    const answers = new Map<number, boolean | null>([[50, false], [70, null]]);
+    const judge = new OnsetJudge(0.5, (o) => (answers.has(o.midi) ? answers.get(o.midi)! : true));
+    const verdicts: string[] = [];
+    const emit = (midi: number, v: string) => verdicts.push(`${v}${midi}`);
+    judge.judgeBatch([onset(50, 1000), onset(70, 1000), onset(72, 1000)], () => [60], emit);
+    judge.judgeBatch([onset(60, 2000)], () => [60], emit);
+    expect(verdicts).toEqual(['hit60', 'wrong72']);
+    answers.set(70, true);
+    judge.judgeBatch([], () => [62], emit);
+    expect(verdicts).toEqual(['hit60', 'wrong72', 'wrong70']);
   });
 });
