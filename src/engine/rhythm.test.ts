@@ -60,3 +60,14 @@ describe('RhythmSession', () => {
     expect(s.expected(10900).sort()).toEqual([62]);
   });
 });
+
+describe('RhythmSession 평균 타이밍', () => {
+  it('맞힌 음이 정해진 박보다 얼마나 늦었는지 (중앙값)', () => {
+    const s = song();
+    s.play(60, 10080);
+    s.play(62, 11100);
+    s.play(64, 12090);
+    expect(s.summary().offsetMs).toBe(90);
+    expect(song().summary().offsetMs).toBeNull();
+  });
+});

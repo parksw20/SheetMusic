@@ -65,6 +65,8 @@ const AI_GAP_WORKER_MS = 0;
 const AI_GAP_MAIN_MS = 100;
 /** 모델이 아직 없거나 소리가 덜 모였을 때 다시 볼 간격 */
 const AI_IDLE_MS = 50;
+/** 브라우저가 마이크 입력 지연을 알려 주지 않을 때 쓰는 값 (ms) */
+const DEFAULT_INPUT_LATENCY_MS = 30;
 
 /**
  * 감도별 AI 기준값.
@@ -182,6 +184,12 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
    * 조각이 도착한 순간 그 조각 끝이 "지금"이므로, 가장 작은 (지금 - 오디오 시간)이 실제 차이에 가깝다.
    */
   let audioToPerf = Infinity;
+  /**
+   * 마이크에 소리가 들어온 뒤 조각으로 도착하기까지의 지연 (ms). 위 차이에는 이 지연이 빠져 있어 친 시각이 늦게 잡힌다.
+   * 브라우저가 알려 주면 그 값, 모르면 보통 값(iPad 약 20~40ms)을 쓴다.
+   */
+  const trackLatency = (stream.getAudioTracks()[0]?.getSettings() as { latency?: number } | undefined)?.latency;
+  const inputLatencyMs = typeof trackLatency === 'number' && trackLatency > 0 && trackLatency < 0.5 ? trackLatency * 1000 : DEFAULT_INPUT_LATENCY_MS;
   const push = (chunk: Float32Array) => {
     audioToPerf = Math.min(audioToPerf, performance.now() - ((written + chunk.length) / sr) * 1000);
     for (let i = 0; i < chunk.length; i++) {
@@ -329,7 +337,7 @@ export async function startMic(opts: MicOptions): Promise<MicSession> {
         .filter((o) => gate.allows(o.time));
       for (const o of found) opts.onHeard(o.midi);
       judge.judgeBatch(found, opts.getExpected, (midi, _verdict, onset) =>
-        opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic', time: onset.time + audioToPerf }),
+        opts.listener({ type: 'on', midi, velocity: 0.8, source: 'mic', time: onset.time + audioToPerf - inputLatencyMs }),
       );
     } catch (e) {
       console.warn('Basic Pitch 실행 오류, 기본 방식으로 바꿉니다', e);

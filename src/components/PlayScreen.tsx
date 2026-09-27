@@ -149,7 +149,8 @@ export function PlayScreen({ xml, score, settings, onSettings, bridge, onFinishe
     const startAt = performance.now() + (count + 0.5) * msPerBeat;
     const session = new RhythmSession(rangeNotes, startAt, msPerBeat, rangeStart);
     rhythmRef.current = session;
-    stopClicksRef.current = playClicks(count, msPerBeat, (startAt - performance.now()) / 1000 - count * (msPerBeat / 1000));
+    // 클릭은 첫 박(startAt) 한 마디 앞부터 들리게 (스피커 지연까지 맞춰 예약한다)
+    stopClicksRef.current = playClicks(count, msPerBeat, startAt - count * msPerBeat);
     setRhythmStats({ hit: 0, wrong: 0, miss: 0 });
     setResetKey((k) => k + 1);
     setMode('rhythm');
