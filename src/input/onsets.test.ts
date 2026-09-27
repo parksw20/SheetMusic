@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NoteTracker, OnsetJudge } from './onsets';
+import { NoteTracker, OnsetJudge, withFastNotes } from './onsets';
 import { resampleTail } from './resample';
 
 /** basic-pitch 결과 한 개 (창 시작 기준 초) */
@@ -29,6 +29,23 @@ describe('NoteTracker', () => {
   it('화음은 같은 시간의 여러 음으로 나온다', () => {
     const t = new NoteTracker();
     expect(t.update([note(67, 1), note(48, 1), note(60, 1), note(64, 1)], 0).map((o) => o.midi).sort()).toEqual([48, 60, 64, 67]);
+  });
+});
+
+describe('withFastNotes', () => {
+  const edge = (pitchMidi: number, startTimeSeconds: number, prob: number) => ({ pitchMidi, startTimeSeconds, prob });
+
+  it('창 끝의 후보는 쳐야 할 음이고 확률이 충분할 때만 더한다', () => {
+    const merged = withFastNotes([note(60, 1.0)], [edge(62, 1.9, 0.8), edge(64, 1.9, 0.9), edge(65, 1.9, 0.4)], [62, 65], 0.7);
+    expect(merged.map((n) => n.pitchMidi)).toEqual([60, 62]);
+  });
+
+  it('빠른 확인으로 낸 음은 다음 창에서 확정돼도 다시 내지 않는다', () => {
+    const t = new NoteTracker();
+    // 창 끝에서 먼저 잡힌 레4(절대 3900ms)가 다음 창에서 조금 다른 위치로 확정된다
+    const a = t.update(withFastNotes([], [edge(62, 1.9, 0.8)], [62], 0.55), 2000);
+    const b = t.update(withFastNotes([note(62, 1.52)], [], [], 0.55), 2400);
+    expect([...a, ...b].map((o) => [o.midi, Math.round(o.time)])).toEqual([[62, 3900]]);
   });
 });
 

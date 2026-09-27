@@ -20,13 +20,40 @@ export interface TranscribedNote {
   amplitude: number;
 }
 
-/** 같은 건반에서 이 시간 안에 다시 시작된 음은 같은 음으로 본다 (창이 겹쳐 같은 음이 여러 번 나옴) */
-const SAME_NOTE_MS = 150;
+/**
+ * 같은 건반에서 이 시간 안에 다시 시작된 음은 같은 음으로 본다
+ * (창이 겹쳐 같은 음이 여러 번 나오고, 빠른 확인 음과 확정 음의 위치가 조금 다르다)
+ */
+const SAME_NOTE_MS = 200;
 /**
  * 창 시작 직후에 시작하는 음은 버린다. 창 앞에서부터 울리던 음을 새 음으로 잡는 경우이고,
- * 진짜 새 타건은 다음 창들(0.15초마다)에서 더 안쪽 위치로 다시 나온다.
+ * 진짜 새 타건은 다음 창들에서 더 안쪽 위치로 다시 나온다.
  */
 const WINDOW_HEAD_SECONDS = 0.25;
+
+/** 창 끝(아직 확정 전) 구간에서 막 시작된 음 후보 (basicPitch.ts의 EdgeOnset) */
+export interface EdgeCandidate {
+  pitchMidi: number;
+  startTimeSeconds: number;
+  prob: number;
+}
+
+/**
+ * 빠른 확인: 창 끝 구간의 후보 중 지금 쳐야 할 음이고 타건 확률이 fastThreshold 이상인 것을
+ * 확정 음에 더한다. 확정은 창 끝 0.17초를 기다려야 하지만, 쳐야 할 음은 이렇게 먼저 맞힌다.
+ * 기대하지 않은 음은 틀림 판정이 성급해지지 않게 확정될 때까지 기다린다.
+ */
+export function withFastNotes(
+  notes: TranscribedNote[],
+  edge: EdgeCandidate[],
+  expected: number[],
+  fastThreshold: number,
+): TranscribedNote[] {
+  const fast = edge
+    .filter((e) => e.prob >= fastThreshold && expected.includes(e.pitchMidi))
+    .map((e) => ({ pitchMidi: e.pitchMidi, startTimeSeconds: e.startTimeSeconds, amplitude: e.prob }));
+  return fast.length ? [...notes, ...fast] : notes;
+}
 
 export class NoteTracker {
   private lastStart = new Map<number, number>();
